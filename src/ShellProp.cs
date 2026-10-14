@@ -30,6 +30,23 @@ public static class ShellProp {
   [StructLayout(LayoutKind.Sequential)] struct LII { public uint cbSize; public uint dwTime; }
   [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LII p);
   public static uint IdleSeconds() { LII l = new LII(); l.cbSize = (uint)Marshal.SizeOf(typeof(LII)); if (!GetLastInputInfo(ref l)) return 0; return (uint)(((uint)Environment.TickCount - l.dwTime) / 1000); }
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  public static bool IsVisibleNotMinimized(IntPtr h) { return IsWindowVisible(h) && !IsIconic(h); }
+  public static void MinimizeNoActivate(IntPtr h) { ShowWindow(h, 7); }            // SW_SHOWMINNOACTIVE
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct STARTUPINFO { public int cb; public string lpReserved, lpDesktop, lpTitle; public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+    public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError; }
+  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool CreateProcessW(string app, string cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  // starts a program with its first window minimised and NOT activated (nothing steals the focus)
+  public static int StartMinNoActivate(string exe, string args) {
+    STARTUPINFO si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO)); si.dwFlags = 1; si.wShowWindow = 7;
+    PROCESS_INFORMATION pi;
+    if (!CreateProcessW(null, "\"" + exe + "\" " + args, IntPtr.Zero, IntPtr.Zero, false, 0, IntPtr.Zero, null, ref si, out pi)) return -1;
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread); return pi.dwProcessId;
+  }
   public static IntPtr ForegroundWindow() { return GetForegroundWindow(); }
   public static bool Foreground(IntPtr h) {          // the ALT tap lets a background process take the foreground
     if (IsIconic(h)) ShowWindow(h, 9);

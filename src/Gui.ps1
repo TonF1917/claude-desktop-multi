@@ -76,6 +76,8 @@ function Show-Manager {
   $lblTitle = New-Label (L 'Claude 多窗口管理器' 'Multiple windows, different APIs') 86 8 820 66 $fTitle $SLATE
   $lblSub = New-Label (L '官方订阅与第三方 API 同时运行,每个窗口独立图标、独立任务栏按钮' 'Official subscription and third-party APIs side by side, one icon and taskbar button each') 90 76 860 28 $fSmall $MID
   $lblLang = New-Label 'Language / 语言' 930 28 170 26 $fSmall $GRAY
+  $lblStatus = New-Label '' 90 104 1000 24 $fSmall $GRAY
+  function Set-Status($text) { $lblStatus.Text = ('{0}  -  {1}' -f (Get-Date -Format 'HH:mm:ss'), $text) }
   $cmbLang = New-Object Windows.Forms.ComboBox; $cmbLang.DropDownStyle = 'DropDownList'; $cmbLang.Location = New-Object Drawing.Point(1100, 22); $cmbLang.Size = New-Object Drawing.Size(112, 28); $cmbLang.Font = $fSmall; $cmbLang.FlatStyle = 'Flat'
   [void]$cmbLang.Items.Add('English'); [void]$cmbLang.Items.Add('中文'); $cmbLang.SelectedIndex = $(if ($zh) { 1 } else { 0 }); $cmbLang.TabStop = $false
   $cmbLang.Add_SelectionChangeCommitted({
@@ -205,7 +207,7 @@ function Show-Manager {
       }
     }
     $c.settings.syncSessions = $chkSync.Checked; $c.settings.syncSettings = $chkSet.Checked
-    $c.settings.liveRefresh = $chkLive.Checked; $c.settings.refreshOfficial = $chkOff.Checked
+    $c.settings.liveRefresh = $chkLive.Checked; $c.settings.refreshOfficial = $chkOff.Checked; $c.settings.notifyReload = $chkNote.Checked
     $c.settings.protocol = $(if ($cmbProto.SelectedIndex -ge 0 -and $cmbProto.SelectedIndex -lt $protoIds.Count) { $protoIds[$cmbProto.SelectedIndex] } else { 'last' })
     $c
   }
@@ -231,7 +233,7 @@ function Show-Manager {
     $form.Cursor = 'WaitCursor'; $c = Read-GridConfig
     foreach ($i in $c.instances) { if ($snapshot[$i.id] -ne [string]$i.palette) { Remove-Item (Get-IconPath $i) -ErrorAction SilentlyContinue; $snapshot[$i.id] = [string]$i.palette } }
     Save-Config $c; Install-All | Out-Null; $form.Cursor = 'Default'
-    [void][Windows.Forms.MessageBox]::Show((L '已应用。请在桌面右键新快捷方式 → 固定到任务栏。' 'Applied. Right-click the Desktop shortcuts and choose Pin to taskbar.')) }
+    Set-Status (L '已应用。新快捷方式在桌面,右键即可固定到任务栏。' 'Applied. New shortcuts are on the Desktop - right-click to pin them to the taskbar.') }
   $btnRestart = New-Btn (L '重启所选(载入新会话)' 'Restart selected (reload sessions)') 20 260 282 $false {
     $r = $grid.CurrentRow; if (-not $r) { return }
     $inst = Get-Instance ([string]$r.Cells['id'].Value)
@@ -245,7 +247,7 @@ function Show-Manager {
     Save-Config (Read-GridConfig); foreach ($i in (Read-Config).instances) { Invoke-Launch $i; Start-Sleep -Seconds 2 } }
   $btnSync = New-Btn (L '立即同步会话' 'Sync sessions now') 20 404 282 $false {
     $form.Cursor = 'WaitCursor'; Backup-Sessions; Initialize-SessionStores; $n = Invoke-SessionSync; $form.Cursor = 'Default'
-    [void][Windows.Forms.MessageBox]::Show((L "已同步 $n 个文件。" "Synced $n file(s).")) }
+    Set-Status (L "已同步 $n 个文件。" "Synced $n file(s).") }
   foreach ($ctl in @($pic, $lblPrev, $lblPrev2, $numAdd, $btnAdd, $btnRemove, $btnApply, $btnRestart, $btnLaunch, $btnAll, $btnSync)) { $cardSide.Controls.Add($ctl) }
 
   # ---- sync & behaviour card
@@ -255,6 +257,7 @@ function Show-Manager {
   $chkSet = New-Check (L '同步固定(置顶)/星标会话的顺序与 MCP 服务器' 'Sync pinned / starred sessions, pin order and MCP servers') 18 80 1150 ([bool]$cfg.settings.syncSettings)
   $chkLive = New-Check (L '实时刷新:空闲且不在前台的窗口会在后台静默重启以载入新会话(忙碌/正在使用的绝不打断)' 'Live refresh: idle, unfocused windows restart silently to load new sessions') 18 112 1150 ([bool]$cfg.settings.liveRefresh)
   $chkOff = New-Check (L '同时对官方窗口启用实时刷新(默认关闭:官方窗口里可能有未发送的草稿或正在运行的会话)' 'Also live-refresh the official window (off by default: may hold unsent drafts)') 18 144 1150 ([bool]$cfg.settings.refreshOfficial)
+  $chkNote = New-Check (L '需要重载时弹出通知(默认关闭)' 'Show a notification when a window in use needs a reload (off by default)') 700 172 480 ([bool]$cfg.settings.notifyReload)
   $lblProto = New-Label (L 'claude:// 链接打开到:' 'Open claude:// links in:') 20 176 260 28 $fBody $SLATE
   $cmbProto = New-Object Windows.Forms.ComboBox; $cmbProto.DropDownStyle = 'DropDownList'; $cmbProto.Location = New-Object Drawing.Point(290, 172); $cmbProto.Size = New-Object Drawing.Size(360, 28); $cmbProto.Font = $fBody; $cmbProto.FlatStyle = 'Flat'
   $protoIds = @('last') + @($cfg.instances | ForEach-Object { [string]$_.id })
@@ -262,9 +265,9 @@ function Show-Manager {
   $cmbProto.SelectedIndex = [Math]::Max(0, [array]::IndexOf($protoIds, [string]$cfg.settings.protocol))
   $hintText = if ($providers.Count -eq 0) { L '未读取到 cc-switch 供应商;仍可使用“跟随 cc-switch”。' 'No cc-switch providers found; "Follow cc-switch" still works.' } else { L '“跟随”共用 cc-switch 网关;选具体供应商则该窗口直连其上游,可与其他窗口同时使用不同供应商。' '"Follow" uses the cc-switch gateway; a specific provider connects that window directly (a different API per window).' }
   $hint = New-Label $hintText 20 208 1150 26 $fSmall $GRAY
-  foreach ($ctl in @($lblSet, $chkSync, $chkSet, $chkLive, $chkOff, $lblProto, $cmbProto, $hint)) { $cardSet.Controls.Add($ctl) }
+  foreach ($ctl in @($lblSet, $chkSync, $chkSet, $chkLive, $chkOff, $chkNote, $lblProto, $cmbProto, $hint)) { $cardSet.Controls.Add($ctl) }
 
-  foreach ($ctl in @($burst, $lblTitle, $lblSub, $lblLang, $cmbLang, $cardGrid, $cardSide, $cardSet)) { $form.Controls.Add($ctl) }
+  foreach ($ctl in @($burst, $lblTitle, $lblSub, $lblStatus, $lblLang, $cmbLang, $cardGrid, $cardSide, $cardSet)) { $form.Controls.Add($ctl) }
 
   # ---- live status
   $timer = New-Object Windows.Forms.Timer; $timer.Interval = 3000

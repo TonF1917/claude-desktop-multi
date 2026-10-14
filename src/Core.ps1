@@ -26,6 +26,7 @@ function Read-Config {
   if (-not $c.settings.PSObject.Properties['protocol'])     { $c.settings | Add-Member protocol 'last' }
   if (-not $c.settings.PSObject.Properties['language'])        { $c.settings | Add-Member language 'en' }
   if (-not $c.settings.PSObject.Properties['syncSettings'])    { $c.settings | Add-Member syncSettings $true }
+  if (-not $c.settings.PSObject.Properties['notifyReload'])    { $c.settings | Add-Member notifyReload $false }
   if (-not $c.settings.PSObject.Properties['liveRefresh'])    { $c.settings | Add-Member liveRefresh $true }
   if (-not $c.settings.PSObject.Properties['refreshOfficial']) { $c.settings | Add-Member refreshOfficial $false }
   $c
@@ -126,7 +127,7 @@ function Start-Agent {
   Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$Root\claude-multi.ps1`"", 'agent'
 }
 
-function Invoke-Launch($i, [string]$Url, [switch]$NoAgent) {
+function Invoke-Launch($i, [string]$Url, [switch]$NoAgent, [switch]$Minimized) {
   $pkg = Get-ClaudePackage
   $exe = Join-Path $pkg.InstallLocation 'app\Claude.exe'
   $data = Get-DataDir $i
@@ -146,7 +147,8 @@ function Invoke-Launch($i, [string]$Url, [switch]$NoAgent) {
       }
       $args_ = @("--user-data-dir=`"$data`"") + $args_
     }
-    if ($args_.Count) { Start-Process $exe -ArgumentList $args_ } else { Start-Process $exe }
+    if ($Minimized) { [void][ShellProp]::StartMinNoActivate($exe, ($args_ -join ' ')) }
+    elseif ($args_.Count) { Start-Process $exe -ArgumentList $args_ } else { Start-Process $exe }
   } finally { $env:LOCALAPPDATA = $RealLocal }
   if (-not $NoAgent) { Start-Agent }
 }
@@ -353,9 +355,9 @@ function Restart-Instance($i, $focusFix) {   # kill, wait until it is really gon
   for ($k = 0; $k -lt 30; $k++) { if (-not @(Get-Roots $i)) { break }; Start-Sleep -Milliseconds 500 }
   Start-Sleep -Seconds 3                                        # let the single-instance lock of the old process go
   try { Apply-PendingSettings $i } catch { }
-  Invoke-Launch $i -NoAgent
+  Invoke-Launch $i -NoAgent -Minimized
   $script:Relaunch[$i.id] = @{ at = Get-Date; tries = 1 }
-  if ($focusFix) { $focusFix[$i.id] = @{ prev = $prev; until = (Get-Date).AddSeconds(90) } }
+  if ($focusFix) { $focusFix[$i.id] = @{ prev = $prev; until = (Get-Date).AddSeconds(90); started = Get-Date; n = 0 } }
   Write-AgentLog "restarted '$($i.id)'"
 }
 # A window only knows the sessions that existed when it started. Stores can be shared through junctions (nothing is "copied" then),
@@ -383,6 +385,19 @@ function Update-Staleness($i, $m) {
   $s.unknown = $unknown
   foreach ($k in @($script:Seen.Keys)) { if ($k -like "$($i.id)|*" -and $k -ne $key) { $script:Seen.Remove($k) } }   # forget old processes
 }
+function Invoke-FocusFix($focusFix, $mains, $all) {   # a silently restarted window stays minimised and never takes the focus
+  foreach ($m in $mains) {
+    $i = Find-InstanceOf $m $all; if (-not $i -or -not $focusFix.ContainsKey($i.id)) { continue }
+    $ff = $focusFix[$i.id]
+    if ((Get-Date) -gt $ff.until) { $focusFix.Remove($i.id); continue }
+    $p = Get-Process -Id $m.ProcessId -ErrorAction SilentlyContinue
+    if (-not $p -or $p.MainWindowHandle -eq 0) { continue }
+    $h = $p.MainWindowHandle
+    if ([ShellProp]::IsVisibleNotMinimized($h)) { [ShellProp]::MinimizeNoActivate($h); $ff.n++ }
+    if ([ShellProp]::ForegroundPid() -eq $m.ProcessId -and $ff.prev -ne [IntPtr]::Zero) { [void][ShellProp]::Foreground($ff.prev) }
+    if ($ff.n -ge 1 -and ((Get-Date) - $ff.started).TotalSeconds -gt 25) { $focusFix.Remove($i.id) }     # settled
+  }
+}
 function Invoke-LiveRefresh($cfg, $mains, [uint32]$fgPid, $focusFix) {
   if (-not $cfg.settings.liveRefresh) { return }
   $all = @($cfg.instances); $procs = $null
@@ -394,7 +409,7 @@ function Invoke-LiveRefresh($cfg, $mains, [uint32]$fgPid, $focusFix) {
     if (((Get-Date) - $since).TotalSeconds -lt 8) { continue }                         # let the other instance finish writing
     if ($m.ProcessId -eq $fgPid -and [ShellProp]::IdleSeconds() -lt 90) {             # the window in use is never touched: offer a button instead
       $w = $script:ToastAt[$i.id]
-      if (-not $w -or ((Get-Date) - $w).TotalMinutes -gt 15) { $script:ToastAt[$i.id] = Get-Date; Show-ReloadToast $i ($script:Seen["$($i.id)|$($m.ProcessId)"].unknown) }
+      if ($cfg.settings.notifyReload -and (-not $w -or ((Get-Date) - $w).TotalMinutes -gt 15)) { $script:ToastAt[$i.id] = Get-Date; Show-ReloadToast $i ($script:Seen["$($i.id)|$($m.ProcessId)"].unknown) }
       continue
     }
     $last = $script:LastRestart[$i.id]; if ($last -and ((Get-Date) - $last).TotalSeconds -lt 120) { continue }
@@ -417,6 +432,7 @@ function Invoke-Agent {
       $cfg = Read-Config; $all = @($cfg.instances)
       $mains = @(Get-ClaudeMains)
       $fg = [ShellProp]::ForegroundPid()
+      if ($focusFix.Count) { Invoke-FocusFix $focusFix $mains $all; Start-Sleep -Milliseconds 250; continue }      # fast loop while a restart settles
       foreach ($m in $mains) {
         $i = Find-InstanceOf $m $all; if (-not $i) { continue }
         $p = Get-Process -Id $m.ProcessId -ErrorAction SilentlyContinue
@@ -429,11 +445,6 @@ function Invoke-Agent {
           }
           [void][TrayIcon]::Apply([uint32]$m.ProcessId, $ico, $i.name)        # tray (notification area) icon + tooltip
         }
-        if ($focusFix.ContainsKey($i.id)) {   # a silently restarted instance must not steal focus
-          $ff = $focusFix[$i.id]
-          if ([ShellProp]::ForegroundPid() -eq $m.ProcessId -and $ff.prev -ne [IntPtr]::Zero) { [void][ShellProp]::Foreground($ff.prev); $focusFix.Remove($i.id) }
-          elseif ((Get-Date) -gt $ff.until) { $focusFix.Remove($i.id) }
-        }
         if ($m.ProcessId -eq $fg) { $s = Read-State; if ($s.lastActive -ne $i.id) { Save-State ([pscustomobject]@{ lastActive = $i.id }) } }
       }
       foreach ($id in @($script:Relaunch.Keys)) {
@@ -442,7 +453,7 @@ function Invoke-Agent {
         if (@(Get-Roots $inst)) { $script:Relaunch.Remove($id); continue }
         if (((Get-Date) - $rl.at).TotalSeconds -gt 25) {
           if ($rl.tries -ge 3) { Write-AgentLog "giving up relaunching '$id'"; $script:Relaunch.Remove($id) }
-          else { $rl.tries++; $rl.at = Get-Date; Write-AgentLog "relaunch '$id' (try $($rl.tries))"; try { Invoke-Launch $inst -NoAgent } catch { Write-AgentLog "relaunch failed: $_" } }
+          else { $rl.tries++; $rl.at = Get-Date; Write-AgentLog "relaunch '$id' (try $($rl.tries))"; try { Invoke-Launch $inst -NoAgent -Minimized } catch { Write-AgentLog "relaunch failed: $_" } }
         }
       }
       if ($tick % 3 -eq 0) {
