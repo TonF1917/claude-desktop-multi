@@ -104,6 +104,19 @@ function Show-Toast([string]$title, [string]$text) {
     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
   } catch { Add-Content (Join-Path $StateDir 'agent.log') ("{0} toast failed: {1}" -f (Get-Date -Format s), $_) }
 }
+function Show-ReloadToast($inst, [int]$count) {
+  try {
+    [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+    [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+    $uri = "claudemulti://restart/$($inst.id)"
+    $title = [Security.SecurityElement]::Escape("$($inst.name): new sessions from your other windows")
+    $body = [Security.SecurityElement]::Escape("$count session(s) are not loaded in this window yet. Reload restarts it (unsent drafts are lost).")
+    $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+    $xml.LoadXml("<toast launch='$uri' activationType='protocol'><visual><binding template='ToastGeneric'><text>$title</text><text>$body</text></binding></visual><actions><action content='Reload now' arguments='$uri' activationType='protocol'/></actions></toast>")
+    $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+  } catch { Add-Content (Join-Path $StateDir 'agent.log') ("{0} reload toast failed: {1}" -f (Get-Date -Format s), $_) }
+}
 function Get-SessionTitle([string]$cliId) {
   foreach ($f in Get-SessionFolders) {
     foreach ($p in [IO.Directory]::EnumerateFiles($f.Path, 'local_*.json')) {

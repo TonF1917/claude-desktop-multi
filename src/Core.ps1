@@ -203,7 +203,17 @@ function Install-All([switch]$Force) {
 }
 
 # ---------------------------------------------------------------- claude:// routing
+function Register-RestartProtocol {      # claudemulti://restart/<id>  (target of the "Reload now" toast button)
+  $k = 'HKCU:\Software\Classes\claudemulti'
+  $cmd = "`"$Wscript`" //B //Nologo `"$Root\run.vbs`" --restart `"%1`""
+  $cur = try { (Get-ItemProperty "$k\shell\open\command" -ErrorAction Stop).'(default)' } catch { '' }
+  if ($cur -eq $cmd) { return }
+  New-Item "$k\shell\open\command" -Force | Out-Null
+  Set-ItemProperty $k -Name '(default)' -Value 'URL:Claude Multi'; Set-ItemProperty $k -Name 'URL Protocol' -Value ''
+  Set-ItemProperty "$k\shell\open\command" -Name '(default)' -Value $cmd
+}
 function Register-Protocol {
+  Register-RestartProtocol
   foreach ($s in 'claude') {
     $k = "HKCU:\Software\Classes\$s"
     $cmd = "`"$Wscript`" //B //Nologo `"$Root\run.vbs`" --url `"%1`""
@@ -315,11 +325,12 @@ function Get-Descendants([int]$rootPid, $procs) {
 function Test-InstanceBusy($i, $rootProc, $procs) {
   # 1) the app itself rewrote a session file in the last 45 s (a file we did not just mirror)
   $now = [datetime]::UtcNow
+  $startedUtc = $rootProc.CreationDate.ToUniversalTime().AddSeconds(120)      # the app rewrites its starred sessions right after it starts: not 'work'
   $cs = Join-Path (Get-StoreRoot $i) 'claude-code-sessions'
   if (Test-Path $cs) {
     foreach ($f in [IO.Directory]::EnumerateFiles($cs, 'local_*.json', [IO.SearchOption]::AllDirectories)) {
       $t = [IO.File]::GetLastWriteTimeUtc($f)
-      if (($now - $t).TotalSeconds -lt 45 -and $script:CopiedStamp[$f] -ne $t.Ticks) { return $true }
+      if (($now - $t).TotalSeconds -lt 45 -and $t -gt $startedUtc -and $script:CopiedStamp[$f] -ne $t.Ticks) { return $true }
     }
   }
   # 2) a non-Electron child (agent CLI, build tool, ...) burned CPU since the previous check
@@ -333,24 +344,62 @@ function Test-InstanceBusy($i, $rootProc, $procs) {
   }
   $false
 }
+$script:Relaunch = @{}
+function Write-AgentLog([string]$m) { try { New-Item -ItemType Directory -Force $StateDir | Out-Null; Add-Content (Join-Path $StateDir 'agent.log') ("{0} {1}" -f (Get-Date -Format s), $m) } catch { } }
+function Restart-Instance($i, $focusFix) {   # kill, wait until it is really gone, apply pending settings, start again (and verify in the agent loop)
+  $prev = [ShellProp]::ForegroundWindow()
+  foreach ($r in @(Get-Roots $i)) { & taskkill.exe /F /T /PID $r.ProcessId | Out-Null }
+  for ($k = 0; $k -lt 30; $k++) { if (-not @(Get-Roots $i)) { break }; Start-Sleep -Milliseconds 500 }
+  Start-Sleep -Seconds 3                                        # let the single-instance lock of the old process go
+  try { Apply-PendingSettings $i } catch { }
+  Invoke-Launch $i -NoAgent
+  $script:Relaunch[$i.id] = @{ at = Get-Date; tries = 1 }
+  if ($focusFix) { $focusFix[$i.id] = @{ prev = $prev; until = (Get-Date).AddSeconds(90) } }
+  Write-AgentLog "restarted '$($i.id)'"
+}
+# A window only knows the sessions that existed when it started. Stores can be shared through junctions (nothing is "copied" then),
+# so staleness is judged per running process: session files it has never seen = files created after it started.
+$script:Seen = @{}
+$script:ToastAt = @{}
+function Update-Staleness($i, $m) {
+  $key = "$($i.id)|$($m.ProcessId)"
+  $startUtc = $m.CreationDate.ToUniversalTime().AddSeconds(3)
+  $all = New-Object 'Collections.Generic.HashSet[string]'
+  foreach ($f in @(Get-SessionFolders | Where-Object Id -eq $i.id)) {
+    foreach ($p in [IO.Directory]::EnumerateFiles($f.Path, 'local_*.json')) { [void]$all.Add([IO.Path]::GetFileName($p)) }
+  }
+  if (-not $script:Seen.ContainsKey($key)) {
+    $known = New-Object 'Collections.Generic.HashSet[string]'
+    foreach ($f in @(Get-SessionFolders | Where-Object Id -eq $i.id)) {
+      foreach ($p in [IO.Directory]::EnumerateFiles($f.Path, 'local_*.json')) { if ([IO.File]::GetCreationTimeUtc($p) -le $startUtc) { [void]$known.Add([IO.Path]::GetFileName($p)) } }
+    }
+    $script:Seen[$key] = @{ known = $known; unknown = -1 }
+  }
+  $s = $script:Seen[$key]; $unknown = 0
+  foreach ($n in $all) { if (-not $s.known.Contains($n)) { $unknown++ } }
+  if ($unknown -gt 0 -and $unknown -ne $s.unknown) { $script:StaleSince[$i.id] = Get-Date }        # new session(s) arrived: restart the settle timer
+  $s.unknown = $unknown
+  foreach ($k in @($script:Seen.Keys)) { if ($k -like "$($i.id)|*" -and $k -ne $key) { $script:Seen.Remove($k) } }   # forget old processes
+}
 function Invoke-LiveRefresh($cfg, $mains, [uint32]$fgPid, $focusFix) {
   if (-not $cfg.settings.liveRefresh) { return }
   $all = @($cfg.instances); $procs = $null
   foreach ($m in $mains) {
     $i = Find-InstanceOf $m $all; if (-not $i) { continue }
     if ($i.kind -eq 'official' -and -not $cfg.settings.refreshOfficial) { continue }
+    try { Update-Staleness $i $m } catch { Write-AgentLog "staleness check failed: $_" }
     $since = $script:StaleSince[$i.id]; if (-not $since) { continue }
     if (((Get-Date) - $since).TotalSeconds -lt 8) { continue }                         # let the other instance finish writing
-    if ($m.ProcessId -eq $fgPid) { continue }                                         # never touch the window in use
+    if ($m.ProcessId -eq $fgPid -and [ShellProp]::IdleSeconds() -lt 90) {             # the window in use is never touched: offer a button instead
+      $w = $script:ToastAt[$i.id]
+      if (-not $w -or ((Get-Date) - $w).TotalMinutes -gt 15) { $script:ToastAt[$i.id] = Get-Date; Show-ReloadToast $i ($script:Seen["$($i.id)|$($m.ProcessId)"].unknown) }
+      continue
+    }
     $last = $script:LastRestart[$i.id]; if ($last -and ((Get-Date) - $last).TotalSeconds -lt 120) { continue }
     if (-not $procs) { $procs = @(Get-CimInstance Win32_Process) }
     if (Test-InstanceBusy $i $m $procs) { continue }
-    $prev = [ShellProp]::ForegroundWindow()
-    & taskkill.exe /F /T /PID $m.ProcessId | Out-Null; Start-Sleep -Seconds 2
-    try { Apply-PendingSettings $i } catch { }
     $script:StaleSince.Remove($i.id); $script:LastRestart[$i.id] = Get-Date
-    Invoke-Launch $i -NoAgent
-    $focusFix[$i.id] = @{ prev = $prev; until = (Get-Date).AddSeconds(90) }
+    Restart-Instance $i $focusFix
     return                                                                            # one restart per cycle
   }
 }
@@ -384,6 +433,15 @@ function Invoke-Agent {
           elseif ((Get-Date) -gt $ff.until) { $focusFix.Remove($i.id) }
         }
         if ($m.ProcessId -eq $fg) { $s = Read-State; if ($s.lastActive -ne $i.id) { Save-State ([pscustomobject]@{ lastActive = $i.id }) } }
+      }
+      foreach ($id in @($script:Relaunch.Keys)) {
+        $rl = $script:Relaunch[$id]; $inst = $all | Where-Object id -eq $id | Select-Object -First 1
+        if (-not $inst) { $script:Relaunch.Remove($id); continue }
+        if (@(Get-Roots $inst)) { $script:Relaunch.Remove($id); continue }
+        if (((Get-Date) - $rl.at).TotalSeconds -gt 25) {
+          if ($rl.tries -ge 3) { Write-AgentLog "giving up relaunching '$id'"; $script:Relaunch.Remove($id) }
+          else { $rl.tries++; $rl.at = Get-Date; Write-AgentLog "relaunch '$id' (try $($rl.tries))"; try { Invoke-Launch $inst -NoAgent } catch { Write-AgentLog "relaunch failed: $_" } }
+        }
       }
       if ($tick % 3 -eq 0) {
         Register-Protocol

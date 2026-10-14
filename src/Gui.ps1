@@ -64,7 +64,7 @@ function Show-Manager {
   $form = New-Object Windows.Forms.Form
   $form.Text = L 'Claude 多窗口管理器' 'Claude Multi-Window Manager'
   $form.Font = $fBody; $form.BackColor = $IVORY; $form.ForeColor = $SLATE; $form.StartPosition = 'CenterScreen'
-  $form.ClientSize = New-Object Drawing.Size(1240, 820); $form.MinimumSize = New-Object Drawing.Size(1240, 820); $form.MaximizeBox = $false
+  $form.ClientSize = New-Object Drawing.Size(1240, 860); $form.MinimumSize = New-Object Drawing.Size(1240, 860); $form.MaximizeBox = $false
   $form.FormBorderStyle = 'FixedSingle'
 
   # ---- header: clay burst + serif title
@@ -84,10 +84,10 @@ function Show-Manager {
     $form.Close() })
 
   # ---- windows table card
-  $cardGrid = New-Card 24 108 850 440
+  $cardGrid = New-Card 24 108 850 470
   $lblGrid = New-Label (L '窗口' 'Windows') 20 10 300 34 $fHead $SLATE
   $grid = New-Object Windows.Forms.DataGridView
-  $grid.Location = New-Object Drawing.Point(14, 54); $grid.Size = New-Object Drawing.Size(822, 374)
+  $grid.Location = New-Object Drawing.Point(14, 54); $grid.Size = New-Object Drawing.Size(822, 404)
   $grid.AllowUserToAddRows = $false; $grid.AllowUserToDeleteRows = $false; $grid.RowHeadersVisible = $false; $grid.SelectionMode = 'FullRowSelect'; $grid.MultiSelect = $false
   $grid.AutoSizeColumnsMode = 'Fill'; $grid.BackgroundColor = [Drawing.Color]::White; $grid.BorderStyle = 'None'; $grid.CellBorderStyle = 'SingleHorizontal'; $grid.GridColor = $CLOUD
   $grid.RowTemplate.Height = 42; $grid.EditMode = 'EditOnKeystrokeOrF2'; $grid.EnableHeadersVisualStyles = $false
@@ -137,7 +137,7 @@ function Show-Manager {
   foreach ($ctl in @($lblGrid, $grid)) { $cardGrid.Controls.Add($ctl) }
 
   # ---- icon preview card + actions
-  $cardSide = New-Card 894 108 322 440
+  $cardSide = New-Card 894 108 322 470
   $pic = New-Object Windows.Forms.PictureBox; $pic.Location = New-Object Drawing.Point(20, 18); $pic.Size = New-Object Drawing.Size(96, 96); $pic.SizeMode = 'Zoom'; $pic.BackColor = [Drawing.Color]::White
   $lblPrev = New-Label (L '图标预览' 'Icon preview') 128 20 180 34 $fHead $SLATE
   $lblPrev2 = New-Label (L '用于桌面、任务栏、系统托盘' 'Desktop, taskbar and tray') 128 58 188 56 $fSmall $GRAY
@@ -220,30 +220,36 @@ function Show-Manager {
       $new = [pscustomobject]@{ id = "x$n"; name = "Claude 3P $n"; kind = 'cc-switch'; palette = $p }
       $c.instances = @($c.instances) + $new; Add-InstanceRow $new; Save-Config $c
     } }
-  $btnRemove = New-Btn (L '删除所选' 'Remove selected') 20 176 282 $false {
+  $btnRemove = New-Btn (L '删除所选' 'Remove selected') 20 172 282 $false {
     $r = $grid.CurrentRow; if (-not $r) { return }
     $id = [string]$r.Cells['id'].Value
     if ($id -eq 'official') { [void][Windows.Forms.MessageBox]::Show((L '官方窗口不能删除。' 'The official window cannot be removed.')); return }
     $c = Read-Config; $c.instances = @($c.instances | Where-Object id -ne $id); Save-Config $c
     $lnk = Get-DesktopLink ([pscustomobject]@{ name = [string]$r.Cells['name'].Value }); if (Test-Path $lnk) { Remove-Item $lnk }
     $grid.Rows.Remove($r) }
-  $btnApply = New-Btn (L '应用更改' 'Apply changes') 20 224 282 $false {
+  $btnApply = New-Btn (L '应用更改' 'Apply changes') 20 216 282 $false {
     $form.Cursor = 'WaitCursor'; $c = Read-GridConfig
     foreach ($i in $c.instances) { if ($snapshot[$i.id] -ne [string]$i.palette) { Remove-Item (Get-IconPath $i) -ErrorAction SilentlyContinue; $snapshot[$i.id] = [string]$i.palette } }
     Save-Config $c; Install-All | Out-Null; $form.Cursor = 'Default'
     [void][Windows.Forms.MessageBox]::Show((L '已应用。请在桌面右键新快捷方式 → 固定到任务栏。' 'Applied. Right-click the Desktop shortcuts and choose Pin to taskbar.')) }
-  $btnLaunch = New-Btn (L '启动所选' 'Launch selected') 20 282 282 $true {
+  $btnRestart = New-Btn (L '重启所选(载入新会话)' 'Restart selected (reload sessions)') 20 260 282 $false {
+    $r = $grid.CurrentRow; if (-not $r) { return }
+    $inst = Get-Instance ([string]$r.Cells['id'].Value)
+    if (-not @(Get-Roots $inst)) { [void][Windows.Forms.MessageBox]::Show((L '该窗口没有在运行。' 'That window is not running.')); return }
+    if ([Windows.Forms.MessageBox]::Show((L '将重启该窗口以载入其他窗口的新会话/固定项。窗口里未发送的草稿会丢失。继续?' 'This restarts the window so it loads new sessions and pins from the other windows. Unsent drafts in it are lost. Continue?'), '', 'YesNo') -ne 'Yes') { return }
+    $form.Cursor = 'WaitCursor'; Save-Config (Read-GridConfig); Restart-Instance $inst $null; $form.Cursor = 'Default' }
+  $btnLaunch = New-Btn (L '启动所选' 'Launch selected') 20 316 282 $true {
     $r = $grid.CurrentRow; if (-not $r) { return }
     Save-Config (Read-GridConfig); Invoke-Launch (Get-Instance ([string]$r.Cells['id'].Value)) }
-  $btnAll = New-Btn (L '全部启动' 'Launch all') 20 330 282 $false {
+  $btnAll = New-Btn (L '全部启动' 'Launch all') 20 360 282 $false {
     Save-Config (Read-GridConfig); foreach ($i in (Read-Config).instances) { Invoke-Launch $i; Start-Sleep -Seconds 2 } }
-  $btnSync = New-Btn (L '立即同步会话' 'Sync sessions now') 20 372 282 $false {
+  $btnSync = New-Btn (L '立即同步会话' 'Sync sessions now') 20 404 282 $false {
     $form.Cursor = 'WaitCursor'; Backup-Sessions; Initialize-SessionStores; $n = Invoke-SessionSync; $form.Cursor = 'Default'
     [void][Windows.Forms.MessageBox]::Show((L "已同步 $n 个文件。" "Synced $n file(s).")) }
-  foreach ($ctl in @($pic, $lblPrev, $lblPrev2, $numAdd, $btnAdd, $btnRemove, $btnApply, $btnLaunch, $btnAll, $btnSync)) { $cardSide.Controls.Add($ctl) }
+  foreach ($ctl in @($pic, $lblPrev, $lblPrev2, $numAdd, $btnAdd, $btnRemove, $btnApply, $btnRestart, $btnLaunch, $btnAll, $btnSync)) { $cardSide.Controls.Add($ctl) }
 
   # ---- sync & behaviour card
-  $cardSet = New-Card 24 564 1192 242
+  $cardSet = New-Card 24 594 1192 242
   $lblSet = New-Label (L '同步与行为' 'Sync and behaviour') 20 10 400 34 $fHead $SLATE
   $chkSync = New-Check (L '在各窗口间同步会话(后台)' 'Sync sessions across windows (background)') 18 48 1150 ([bool]$cfg.settings.syncSessions)
   $chkSet = New-Check (L '同步固定(置顶)/星标会话的顺序与 MCP 服务器' 'Sync pinned / starred sessions, pin order and MCP servers') 18 80 1150 ([bool]$cfg.settings.syncSettings)

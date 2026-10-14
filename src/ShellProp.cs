@@ -27,6 +27,9 @@ public static class ShellProp {
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [StructLayout(LayoutKind.Sequential)] struct LII { public uint cbSize; public uint dwTime; }
+  [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LII p);
+  public static uint IdleSeconds() { LII l = new LII(); l.cbSize = (uint)Marshal.SizeOf(typeof(LII)); if (!GetLastInputInfo(ref l)) return 0; return (uint)(((uint)Environment.TickCount - l.dwTime) / 1000); }
   public static IntPtr ForegroundWindow() { return GetForegroundWindow(); }
   public static bool Foreground(IntPtr h) {          // the ALT tap lets a background process take the foreground
     if (IsIconic(h)) ShowWindow(h, 9);

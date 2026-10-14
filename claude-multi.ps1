@@ -6,7 +6,7 @@
 .EXAMPLE   .\claude-multi.ps1 launch -Id 3p
 #>
 param(
-  [Parameter(Position = 0)][ValidateSet('gui', 'install', 'launch', 'route', 'agent', 'sync', 'list', 'add', 'remove', 'uninstall', 'icons', 'providers')][string]$Command = 'gui',
+  [Parameter(Position = 0)][ValidateSet('gui', 'install', 'launch', 'restart', 'route', 'agent', 'sync', 'list', 'add', 'remove', 'uninstall', 'icons', 'providers')][string]$Command = 'gui',
   [string]$Id, [string]$Name, [string]$Palette = 'violet', [string]$Provider, [string]$Profile, [string]$Url,
   [switch]$Force
 )
@@ -24,6 +24,11 @@ switch ($Command) {
   'install' { Install-All -Force:$Force; "`nDone. Right-click a Desktop shortcut -> 'Pin to taskbar' (Windows does not let scripts pin)." }
   'launch'  { Invoke-Launch (Get-Instance $Id) }
   'route'   { Invoke-RouteUrl $Url }
+  'restart' {
+    if ($Url -match '^claudemulti://restart/([A-Za-z0-9_-]+)$') { $Id = $Matches[1] }
+    if (-not $Id) { throw 'restart needs -Id <instance>' }
+    Restart-Instance (Get-Instance $Id) $null
+  }
   'agent'   { Invoke-Agent }
   'sync'    { Backup-Sessions; Initialize-SessionStores; "copied: $(Invoke-SessionSync)" }
   'icons'   { Update-Icons (Read-Config).instances -Force:$Force }
