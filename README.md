@@ -1,8 +1,8 @@
-# Claude Desktop Multi-Instance
+# Claude Desktop: multiple windows with different APIs at the same time
 
 **English** · [简体中文](README.zh-CN.md)
 
-Run the **official Claude Desktop (subscription)** and any number of **cc-switch–driven third-party Claude Desktop** windows **at the same time** on Windows — each with its own data, its own taskbar button and its own recoloured icon. The default third-party icon is the official one in **purple-black with a white star**.
+**Use several Claude Desktop windows at once, each on a different API.** Keep your **official Claude subscription** in one window and run as many other windows as you like on **custom / third-party APIs** (driven by [cc-switch](https://github.com/farion1231/cc-switch)) — *multi-API, multi-window, multi-account Claude Desktop on Windows*. Official and third-party windows run **at the same time** — each with its own data, its own taskbar button and its own recoloured icon. The default third-party icon is the official one in **purple-black with a white star**.
 
 > Unofficial community tool. Not affiliated with or endorsed by Anthropic or cc-switch. Icons are generated **locally** from the icon of your installed app; no Anthropic artwork is shipped in this repository.
 
@@ -26,8 +26,8 @@ Palettes: `violet` (default), `gemini`, `gpt`, `perplexity`, `deepseek`, `workbu
 ## Quick start
 
 ```powershell
-git clone https://github.com/TonF1917/claude-desktop-multi-instance
-cd claude-desktop-multi-instance
+git clone https://github.com/TonF1917/claude-desktop-multiple-windows-different-api
+cd claude-desktop-multiple-windows-different-api
 .\claude-multi.ps1 install        # icons + shortcuts for every instance in instances.json
 ```
 
@@ -62,7 +62,7 @@ Other commands: `list`, `remove -Id <id>`, `icons -Force` (regenerate), `uninsta
 | Conversation transcripts | yes (natively) | they live in `~\.claude\projects`, shared by every instance |
 | Login, provider, model list, window size/position | no | per instance on purpose |
 
-**Why not instantly?** The app reads sessions, pins and MCP servers at start-up only; there is no watcher or reload command to call, and remote debugging is blocked in the production build. The closest safe thing is the silent restart of idle, unfocused windows described above.
+**Why not instantly?** Claude Desktop does read these folders - but only when it starts, and again only when the signed-in account or organisation changes. I checked: it has no file watcher, rewriting its `config.json` does not make it re-read anything, and remote debugging is blocked in the production build, so nothing outside the app can tell a running window to re-read the folder. The closest safe thing is the silent restart of idle, unfocused windows described above.
 
 **Same session in two windows.** Every window runs its own Claude Code process per session (`--resume=<id>`). If you send in both, both append to the same transcript while each keeps its own context, so the history interleaves and the two windows disagree. The agent shows a Windows notification when a session is live in two instances and one of them is working - keep a session active in one window at a time.
 

@@ -1,8 +1,8 @@
-# Claude Desktop 多开(Multi-Instance)
+# Claude Desktop 多开:多个窗口同时用不同 API(多 API 同时工作)
 
 [English](README.md) · **简体中文**
 
-在 Windows 上让 **官方 Claude Desktop(订阅)** 与任意数量的 **cc-switch 驱动的第三方 Claude Desktop** **同时运行**:各自独立数据、独立任务栏按钮、独立配色图标。第三方默认图标是官方图标的 **紫黑底 + 白色星芒**。
+**Claude Desktop 多开,多个窗口同时使用不同 API。** 一个窗口保持**官方订阅**,其余窗口想开几个开几个,分别走**自定义 / 第三方 API**(由 [cc-switch](https://github.com/farion1231/cc-switch) 驱动)——*Claude Desktop 多 API、多窗口、多账号同时工作(Windows)*。官方与第三方窗口**同时运行**:各自独立数据、独立任务栏按钮、独立配色图标。第三方默认图标是官方图标的 **紫黑底 + 白色星芒**。
 
 > 非官方社区工具,与 Anthropic、cc-switch 无任何关联。图标由你本机已安装的应用图标**在本地生成**,仓库里不含 Anthropic 的任何图片素材。
 
@@ -26,8 +26,8 @@
 ## 快速开始
 
 ```powershell
-git clone https://github.com/TonF1917/claude-desktop-multi-instance
-cd claude-desktop-multi-instance
+git clone https://github.com/TonF1917/claude-desktop-multiple-windows-different-api
+cd claude-desktop-multiple-windows-different-api
 .\claude-multi.ps1 install        # 为 instances.json 中的每个实例生成图标和快捷方式
 ```
 
@@ -62,7 +62,7 @@ cd claude-desktop-multi-instance
 | 对话记录 | 是(天然共享) | 存放在 `~\.claude\projects`,所有实例共用 |
 | 登录、供应商、模型列表、窗口大小位置 | 否 | 有意保持各实例独立 |
 
-**为什么不能瞬时同步?** 应用只在启动时读取会话、固定项和 MCP 服务器,没有文件监听,也没有可调用的重载命令,正式版还禁用了远程调试。最接近且安全的办法就是上文所述:对空闲、非焦点窗口做后台静默重启。
+**为什么不能瞬时同步?** Claude Desktop 确实会读这些文件夹,但只在启动时读,以及登录账号/组织变化时再读。我实测过:它没有文件监听,改写它的 `config.json` 也不会触发重新读取,正式版还禁用了远程调试,所以应用之外没有任何办法让一个运行中的窗口重新读文件夹。最接近且安全的办法就是上文所述:对空闲、非焦点窗口做后台静默重启。
 
 **同一会话在两个窗口同时发送会怎样?** 每个窗口为每个会话各跑一个 Claude Code 进程(`--resume=<id>`)。两边都发送时,它们会往同一份对话记录里写,但各自保留自己的上下文,历史会交错、两个窗口的内容不一致。某会话在两个实例里同时存活且其中一个正在工作时,后台代理会弹出 Windows 通知——同一会话请只在一个窗口里活跃。
 

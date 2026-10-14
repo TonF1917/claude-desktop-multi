@@ -18,6 +18,8 @@
                      "syncSessions":  true,
                      "protocol":  "last",
                      "liveRefresh":  true,
-                     "refreshOfficial":  false
+                     "refreshOfficial":  false,
+                     "language":  "en",
+                     "syncSettings":  true
                  }
 }
