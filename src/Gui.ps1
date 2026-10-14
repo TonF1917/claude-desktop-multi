@@ -180,7 +180,7 @@ function Show-Manager {
     $lnk = Get-DesktopLink ([pscustomobject]@{ name = [string]$r.Cells['name'].Value }); if (Test-Path $lnk) { Remove-Item $lnk }
     $grid.Rows.Remove($r)
   }
-  $null = Add-Btn (L '应用(保存+图标+快捷方式)' 'Apply (save + icons + shortcuts)') 860 242 320 {
+  $null = Add-Btn (L '应用(保存+图标+快捷方式)' 'Apply changes') 860 242 320 {
     $form.Cursor = 'WaitCursor'
     $c = Read-GridConfig
     foreach ($i in $c.instances) {                       # regenerate icons whose palette changed
