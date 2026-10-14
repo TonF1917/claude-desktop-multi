@@ -15,6 +15,7 @@ $script:Wscript       = Join-Path $env:WINDIR 'System32\wscript.exe'
 . (Join-Path $Root 'src\Icon.ps1')
 . (Join-Path $Root 'src\CcSwitch.ps1')
 if (-not ('ShellProp' -as [type])) { Add-Type -TypeDefinition (Get-Content (Join-Path $Root 'src\ShellProp.cs') -Raw) -Language CSharp }
+. (Join-Path $Root 'src\Extras.ps1')
 
 # ---------------------------------------------------------------- config / state
 function Write-Utf8($path, $text) { [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $false)) }
@@ -23,6 +24,8 @@ function Read-Config {
   if (-not $c.PSObject.Properties['settings']) { $c | Add-Member settings ([pscustomobject]@{}) }
   if (-not $c.settings.PSObject.Properties['syncSessions']) { $c.settings | Add-Member syncSessions $true }
   if (-not $c.settings.PSObject.Properties['protocol'])     { $c.settings | Add-Member protocol 'last' }
+  if (-not $c.settings.PSObject.Properties['language'])        { $c.settings | Add-Member language 'en' }
+  if (-not $c.settings.PSObject.Properties['syncSettings'])    { $c.settings | Add-Member syncSettings $true }
   if (-not $c.settings.PSObject.Properties['liveRefresh'])    { $c.settings | Add-Member liveRefresh $true }
   if (-not $c.settings.PSObject.Properties['refreshOfficial']) { $c.settings | Add-Member refreshOfficial $false }
   $c
@@ -129,6 +132,7 @@ function Invoke-Launch($i, [string]$Url, [switch]$NoAgent) {
   $data = Get-DataDir $i
   $args_ = @()
   if ($Url) { $args_ += "`"$Url`"" }
+  if (-not (Get-Roots $i)) { try { Apply-PendingSettings $i } catch { } }      # settings changed elsewhere while this instance was closed
   try {
     if ($i.kind -eq 'official') {
       if ($i.isolate -ne $false) { $env:LOCALAPPDATA = Initialize-OfficialHome }
@@ -235,6 +239,12 @@ $script:LastRestart = @{}
 $script:Cpu         = @{}
 
 function Get-StoreRoot($i) { Get-DataDir $i }
+function Get-SessionMeta([string]$path) {   # the fields a user sees in the list: pin/star, archive, title
+  $txt = [IO.File]::ReadAllText($path); $m = ''
+  foreach ($k in 'isStarred', 'isArchived') { if ($txt -match "`"$k`":(true|false)") { $m += "$k=$($Matches[1]);" } }
+  if ($txt -match '"title":"((?:[^"\\]|\\.)*)"') { $m += 'title=' + $Matches[1] }
+  $m
+}
 function Get-SessionFolders {
   foreach ($i in (Read-Config).instances) {
     $cs = Join-Path (Get-StoreRoot $i) 'claude-code-sessions'
@@ -271,9 +281,11 @@ function Invoke-SessionSync {
       $need = $isNew -or ([IO.File]::GetLastWriteTimeUtc($dst) -lt $b.t.AddSeconds(-1))
       if ($need -and $dst -ne $b.p) {
         try {
+          $metaChanged = $false
+          if (-not $isNew) { $metaChanged = ((Get-SessionMeta $dst) -ne (Get-SessionMeta $b.p)) }
           [IO.File]::Copy($b.p, $dst, $true); [IO.File]::SetLastWriteTimeUtc($dst, $b.t)
           $script:CopiedStamp[$dst] = [IO.File]::GetLastWriteTimeUtc($dst).Ticks
-          if ($isNew) { $script:StaleSince[$f.Id] = Get-Date }     # only a session the instance has never seen makes it stale (updates to known ones do not)
+          if ($isNew -or $metaChanged) { $script:StaleSince[$f.Id] = Get-Date }     # only a session the instance has never seen makes it stale (updates to known ones do not)
           $copied++
         } catch { }
       }
@@ -335,6 +347,7 @@ function Invoke-LiveRefresh($cfg, $mains, [uint32]$fgPid, $focusFix) {
     if (Test-InstanceBusy $i $m $procs) { continue }
     $prev = [ShellProp]::ForegroundWindow()
     & taskkill.exe /F /T /PID $m.ProcessId | Out-Null; Start-Sleep -Seconds 2
+    try { Apply-PendingSettings $i } catch { }
     $script:StaleSince.Remove($i.id); $script:LastRestart[$i.id] = Get-Date
     Invoke-Launch $i -NoAgent
     $focusFix[$i.id] = @{ prev = $prev; until = (Get-Date).AddSeconds(90) }
@@ -374,9 +387,10 @@ function Invoke-Agent {
       if ($tick % 3 -eq 0) {
         Register-Protocol
         if ($cfg.settings.syncSessions -and $mains.Count -gt 0) {
-          try { Backup-Sessions; Initialize-SessionStores; [void](Invoke-SessionSync); Invoke-LiveRefresh $cfg $mains $fg $focusFix } catch { Add-Content (Join-Path $StateDir 'agent.log') ("{0} {1}" -f (Get-Date -Format s), $_) }
+          try { Backup-Sessions; Initialize-SessionStores; [void](Invoke-SessionSync); if ($cfg.settings.syncSettings) { Invoke-SettingsSync $cfg $mains }; Invoke-LiveRefresh $cfg $mains $fg $focusFix } catch { Add-Content (Join-Path $StateDir 'agent.log') ("{0} {1}" -f (Get-Date -Format s), $_) }
         }
       }
+      if ($tick % 6 -eq 0 -and $mains.Count -gt 1) { try { Invoke-ConcurrencyGuard $cfg $mains } catch { Add-Content (Join-Path $StateDir 'agent.log') ('{0} guard {1}' -f (Get-Date -Format s), $_) } }
       if ($mains.Count -eq 0) { if (-not $idleSince) { $idleSince = Get-Date } elseif (((Get-Date) - $idleSince).TotalSeconds -gt 90) { break } } else { $idleSince = $null }
       $tick++; Start-Sleep -Seconds 2
     }

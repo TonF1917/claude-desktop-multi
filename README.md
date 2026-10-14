@@ -1,4 +1,4 @@
-# Claude Desktop Multi
+# Claude Desktop Multi-Instance
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -26,12 +26,12 @@ Palettes: `violet` (default), `gemini`, `gpt`, `perplexity`, `deepseek`, `workbu
 ## Quick start
 
 ```powershell
-git clone https://github.com/TonF1917/claude-desktop-multi
-cd claude-desktop-multi
+git clone https://github.com/TonF1917/claude-desktop-multi-instance
+cd claude-desktop-multi-instance
 .\claude-multi.ps1 install        # icons + shortcuts for every instance in instances.json
 ```
 
-A Desktop shortcut **Claude Multi Manager** opens the GUI (`.\claude-multi.ps1 gui`): choose how many instances you want, which cc-switch provider and which colour each one uses, launch them, sync sessions.
+A Desktop shortcut **Claude Multi Manager** opens the GUI (English by default; switch to 中文 with the language box on the right) (`.\claude-multi.ps1 gui`): choose how many instances you want, which cc-switch provider and which colour each one uses, launch them, sync sessions.
 
 Then right-click each new Desktop shortcut → **Pin to taskbar** (Windows does not allow scripts to pin).
 
@@ -51,6 +51,22 @@ Other commands: `list`, `remove -Id <id>`, `icons -Force` (regenerate), `uninsta
   1. every `local_*.json` session file is mirrored newest-wins into the session folders of all instances within seconds (nothing is deleted; the first sync backs everything up to `~\.claude-multi\backup-sessions`; transcripts in `~\.claude` are shared natively);
   2. when a session appears that another instance has never seen, that instance is restarted **silently in the background** (about 10-45 s): only if it is not the focused window, has not written a session file in the last 45 s, and none of its agent/tool child processes is using CPU. The restarted window does not take the focus back. Busy or focused windows are never touched; they refresh as soon as they become idle. The official instance is excluded unless you tick *Also live-refresh the official instance* in the GUI (it may hold unsent drafts).
 * **`claude://` links** are routed by `run.vbs` to the instance you last used (or a fixed one, chosen in the GUI). If it is already running the link is handed to that window; otherwise it is started with the link. The agent re-asserts the handler because Claude re-registers itself whenever it starts.
+
+## What is synced between instances
+
+| Item | Synced? | How / when it shows up in another window |
+|---|---|---|
+| Sessions (new ones, titles, archive state) | yes | files mirrored within seconds; the other window loads them after its silent background restart |
+| Pinned / starred sessions and pin order | yes | the `isStarred` flag in each session, plus `starred-*` and `pinnedOrder` in `claude_desktop_config.json`; written into a window only while it is closed (or just before its background restart) so the app cannot overwrite it |
+| MCP servers | yes | same mechanism (`mcpServers`); switch off in the GUI with *Sync pinned / starred ... and MCP servers* |
+| Conversation transcripts | yes (natively) | they live in `~\.claude\projects`, shared by every instance |
+| Login, provider, model list, window size/position | no | per instance on purpose |
+
+**Why not instantly?** The app reads sessions, pins and MCP servers at start-up only; there is no watcher or reload command to call, and remote debugging is blocked in the production build. The closest safe thing is the silent restart of idle, unfocused windows described above.
+
+**Same session in two windows.** Every window runs its own Claude Code process per session (`--resume=<id>`). If you send in both, both append to the same transcript while each keeps its own context, so the history interleaves and the two windows disagree. The agent shows a Windows notification when a session is live in two instances and one of them is working - keep a session active in one window at a time.
+
+**How sessions look.** Every window shows the same merged list; there is no per-instance badge. A session keeps its folder, model and effort, but when you open it in another window it runs through **that window's** login/provider (subscription in the official one, the chosen provider in a third-party one).
 
 ## Using cc-switch
 

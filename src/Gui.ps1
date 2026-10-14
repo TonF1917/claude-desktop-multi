@@ -5,7 +5,7 @@ if (-not ('Dpi' -as [type])) { Add-Type -MemberDefinition '[DllImport("user32.dl
 function Show-Manager {
   [void][Win32.Dpi]::SetProcessDPIAware()
   [Windows.Forms.Application]::EnableVisualStyles()
-  $zh = (((Get-UICulture).Name -like 'zh*') -or ((Get-Culture).Name -like 'zh*'))
+  $zh = ((Read-Config).settings.language -eq 'zh')
   function L($zhText, $enText) { if ($zh) { $zhText } else { $enText } }
   $fams = (New-Object Drawing.Text.InstalledFontCollection).Families.Name
   $fam = (@('Noto Serif SC', 'Source Han Serif SC', '思源宋体', 'Georgia', 'SimSun') | Where-Object { $fams -contains $_ } | Select-Object -First 1)
@@ -21,7 +21,7 @@ function Show-Manager {
 
   $form = New-Object Windows.Forms.Form
   $form.Text = L 'Claude 多开管理器' 'Claude Multi Manager'
-  $form.Font = $font; $form.StartPosition = 'CenterScreen'; $form.ClientSize = New-Object Drawing.Size(1200, 740)
+  $form.Font = $font; $form.StartPosition = 'CenterScreen'; $form.ClientSize = New-Object Drawing.Size(1200, 790)
   $form.MinimumSize = New-Object Drawing.Size(1000, 600)
 
   # ---- grid
@@ -151,6 +151,7 @@ function Show-Manager {
       }
     }
     $c.settings.syncSessions = $chkSync.Checked
+    $c.settings.syncSettings = $chkSet.Checked
     $c.settings.liveRefresh = $chkLive.Checked
     $c.settings.refreshOfficial = $chkOff.Checked
     $c.settings.protocol = $(if ($cmbProto.SelectedIndex -ge 0 -and $cmbProto.SelectedIndex -lt $protoIds.Count) { $protoIds[$cmbProto.SelectedIndex] } else { 'last' })
@@ -202,6 +203,16 @@ function Show-Manager {
     [void][Windows.Forms.MessageBox]::Show((L "已同步 $n 个文件。" "Synced $n file(s)."))
   }
 
+  # ---- language switch (applies by reopening the window)
+  $lblLang = New-Object Windows.Forms.Label; $lblLang.Text = 'Language / 语言'; $lblLang.Location = '860,420'; $lblLang.Size = '320,26'; $lblLang.Anchor = 'Top,Right'
+  $cmbLang = New-Object Windows.Forms.ComboBox; $cmbLang.DropDownStyle = 'DropDownList'; $cmbLang.Location = '860,448'; $cmbLang.Size = '320,28'; $cmbLang.Anchor = 'Top,Right'
+  [void]$cmbLang.Items.Add('English'); [void]$cmbLang.Items.Add('中文')
+  $cmbLang.SelectedIndex = $(if ($zh) { 1 } else { 0 })
+  $cmbLang.Add_SelectionChangeCommitted({
+    $c = Read-Config; $c.settings.language = $(if ($cmbLang.SelectedIndex -eq 1) { 'zh' } else { 'en' }); Save-Config $c
+    Start-Process powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-STA', '-File', "`"$Root\claude-multi.ps1`"", 'gui'
+    $form.Close()
+  })
   # ---- settings strip
   $chkSync = New-Object Windows.Forms.CheckBox; $chkSync.Text = L '在各实例间同步会话(后台)' 'Sync sessions across instances (background)'
   $chkSync.Location = '14,500'; $chkSync.Size = '1100,28'; $chkSync.Anchor = 'Bottom,Left'; $chkSync.Checked = [bool]$cfg.settings.syncSessions
@@ -209,15 +220,17 @@ function Show-Manager {
   $chkLive.Location = '14,530'; $chkLive.Size = '1170,28'; $chkLive.Anchor = 'Bottom,Left'; $chkLive.Checked = [bool]$cfg.settings.liveRefresh
   $chkOff = New-Object Windows.Forms.CheckBox; $chkOff.Text = L '同时对官方实例启用实时刷新(默认关闭:官方窗口里可能有未发送的草稿或正在运行的会话)' 'Also live-refresh the official instance (off by default: it may hold unsent drafts or running sessions)'
   $chkOff.Location = '14,558'; $chkOff.Size = '1170,28'; $chkOff.Anchor = 'Bottom,Left'; $chkOff.Checked = [bool]$cfg.settings.refreshOfficial
-  $lblProto = New-Object Windows.Forms.Label; $lblProto.Text = L 'claude:// 链接打开到:' 'Open claude:// links in:'; $lblProto.Location = '14,590'; $lblProto.Size = '300,28'; $lblProto.Anchor = 'Bottom,Left'
-  $cmbProto = New-Object Windows.Forms.ComboBox; $cmbProto.DropDownStyle = 'DropDownList'; $cmbProto.Location = '320,586'; $cmbProto.Size = '360,28'; $cmbProto.Anchor = 'Bottom,Left'
+  $chkSet = New-Object Windows.Forms.CheckBox; $chkSet.Text = L '同步固定(置顶)/星标会话的顺序与 MCP 服务器' 'Sync pinned / starred sessions, pin order and MCP servers'
+  $chkSet.Location = '14,614'; $chkSet.Size = '1170,28'; $chkSet.Anchor = 'Bottom,Left'; $chkSet.Checked = [bool]$cfg.settings.syncSettings
+  $lblProto = New-Object Windows.Forms.Label; $lblProto.Text = L 'claude:// 链接打开到:' 'Open claude:// links in:'; $lblProto.Location = '14,650'; $lblProto.Size = '300,28'; $lblProto.Anchor = 'Bottom,Left'
+  $cmbProto = New-Object Windows.Forms.ComboBox; $cmbProto.DropDownStyle = 'DropDownList'; $cmbProto.Location = '320,646'; $cmbProto.Size = '360,28'; $cmbProto.Anchor = 'Bottom,Left'
   $protoIds = @('last') + @($cfg.instances | ForEach-Object { [string]$_.id })
   [void]$cmbProto.Items.Add((L '最近使用的实例' 'Last used instance')); foreach ($i in $cfg.instances) { [void]$cmbProto.Items.Add([string]$i.name) }
   $cmbProto.SelectedIndex = [Math]::Max(0, [array]::IndexOf($protoIds, [string]$cfg.settings.protocol))
-  $hint = New-Object Windows.Forms.Label; $hint.Location = '14,630'; $hint.Size = '1170,70'; $hint.Anchor = 'Bottom,Left,Right'; $hint.ForeColor = 'DimGray'
+  $hint = New-Object Windows.Forms.Label; $hint.Location = '14,690'; $hint.Size = '1170,60'; $hint.Anchor = 'Bottom,Left,Right'; $hint.ForeColor = 'DimGray'
   $hint.Text = if ($providers.Count -eq 0) { L '未读取到 cc-switch 供应商(需要 python 或 sqlite3);仍可使用“跟随 cc-switch”。' 'No cc-switch providers found (needs python or sqlite3); "Follow cc-switch" still works.' }
                else { L '“跟随”共用 cc-switch 网关;选具体供应商则该实例直连其上游,可与其他实例同时使用不同供应商。' '"Follow" shares the cc-switch gateway; a specific provider connects that instance directly, so instances can use different providers at once.' }
-  foreach ($ctl in @($grid, $pic, $picLabel, $chkSync, $chkLive, $chkOff, $lblProto, $cmbProto, $hint)) { $form.Controls.Add($ctl) }
+  foreach ($ctl in @($chkSet, $lblLang, $cmbLang, $grid, $pic, $picLabel, $chkSync, $chkLive, $chkOff, $lblProto, $cmbProto, $hint)) { $form.Controls.Add($ctl) }
 
   # ---- live status
   $timer = New-Object Windows.Forms.Timer; $timer.Interval = 3000
