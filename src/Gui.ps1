@@ -73,8 +73,8 @@ function Show-Manager {
     $g = $e.Graphics; $g.SmoothingMode = 'AntiAlias'; $pen = New-Object Drawing.Pen($CLAY, 3.2); $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
     for ($k = 0; $k -lt 12; $k++) { $a = $k * [Math]::PI / 6; $r1 = 6; $r2 = if ($k % 2) { 17 } else { 21 }
       $g.DrawLine($pen, [single](23 + [Math]::Cos($a) * $r1), [single](23 + [Math]::Sin($a) * $r1), [single](23 + [Math]::Cos($a) * $r2), [single](23 + [Math]::Sin($a) * $r2)) } })
-  $lblTitle = New-Label (L 'Claude 多窗口管理器' 'Multiple windows, different APIs') 86 12 820 52 $fTitle $SLATE
-  $lblSub = New-Label (L '官方订阅与第三方 API 同时运行,每个窗口独立图标、独立任务栏按钮' 'Official subscription and third-party APIs side by side, one icon and taskbar button each') 90 66 860 26 $fSmall $MID
+  $lblTitle = New-Label (L 'Claude 多窗口管理器' 'Multiple windows, different APIs') 86 8 820 66 $fTitle $SLATE
+  $lblSub = New-Label (L '官方订阅与第三方 API 同时运行,每个窗口独立图标、独立任务栏按钮' 'Official subscription and third-party APIs side by side, one icon and taskbar button each') 90 76 860 28 $fSmall $MID
   $lblLang = New-Label 'Language / 语言' 930 28 170 26 $fSmall $GRAY
   $cmbLang = New-Object Windows.Forms.ComboBox; $cmbLang.DropDownStyle = 'DropDownList'; $cmbLang.Location = New-Object Drawing.Point(1100, 22); $cmbLang.Size = New-Object Drawing.Size(112, 28); $cmbLang.Font = $fSmall; $cmbLang.FlatStyle = 'Flat'
   [void]$cmbLang.Items.Add('English'); [void]$cmbLang.Items.Add('中文'); $cmbLang.SelectedIndex = $(if ($zh) { 1 } else { 0 }); $cmbLang.TabStop = $false
@@ -85,9 +85,9 @@ function Show-Manager {
 
   # ---- windows table card
   $cardGrid = New-Card 24 108 850 440
-  $lblGrid = New-Label (L '窗口' 'Windows') 20 12 300 28 $fHead $SLATE
+  $lblGrid = New-Label (L '窗口' 'Windows') 20 10 300 34 $fHead $SLATE
   $grid = New-Object Windows.Forms.DataGridView
-  $grid.Location = New-Object Drawing.Point(14, 50); $grid.Size = New-Object Drawing.Size(822, 374)
+  $grid.Location = New-Object Drawing.Point(14, 54); $grid.Size = New-Object Drawing.Size(822, 374)
   $grid.AllowUserToAddRows = $false; $grid.AllowUserToDeleteRows = $false; $grid.RowHeadersVisible = $false; $grid.SelectionMode = 'FullRowSelect'; $grid.MultiSelect = $false
   $grid.AutoSizeColumnsMode = 'Fill'; $grid.BackgroundColor = [Drawing.Color]::White; $grid.BorderStyle = 'None'; $grid.CellBorderStyle = 'SingleHorizontal'; $grid.GridColor = $CLOUD
   $grid.RowTemplate.Height = 42; $grid.EditMode = 'EditOnKeystrokeOrF2'; $grid.EnableHeadersVisualStyles = $false
@@ -97,7 +97,7 @@ function Show-Manager {
   $grid.DefaultCellStyle.BackColor = [Drawing.Color]::White; $grid.DefaultCellStyle.ForeColor = $SLATE; $grid.DefaultCellStyle.SelectionBackColor = $SEL; $grid.DefaultCellStyle.SelectionForeColor = $SLATE
   $cName = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cName.HeaderText = L '名称' 'Name'; $cName.Name = 'name'; $cName.FillWeight = 22
   $cId = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cId.HeaderText = 'ID'; $cId.Name = 'id'; $cId.ReadOnly = $true; $cId.FillWeight = 10
-  $cProv = New-Object Windows.Forms.DataGridViewComboBoxColumn; $cProv.HeaderText = L '接口 / 供应商' 'API / provider'; $cProv.Name = 'provider'; $cProv.FillWeight = 34; $cProv.FlatStyle = 'Flat'
+  $cProv = New-Object Windows.Forms.DataGridViewComboBoxColumn; $cProv.HeaderText = L '接口 / 供应商' 'API / provider'; $cProv.Name = 'provider'; $cProv.FillWeight = 34; $cProv.FlatStyle = 'Flat'; $cProv.DisplayStyle = 'Nothing'
   $provText = [ordered]@{ '__official' = (L '官方订阅' 'Official subscription'); '' = (L '跟随 cc-switch 当前选择' 'Follow cc-switch selection') }
   $provFmt = @{}
   foreach ($p in $providers) {
@@ -107,10 +107,9 @@ function Show-Manager {
   }
   foreach ($k in $provText.Keys) { [void]$cProv.Items.Add($provText[$k]) }
   function Get-ProvId([string]$text) { foreach ($k in $provText.Keys) { if ($provText[$k] -eq $text) { return [string]$k } }; '' }
-  $cPal = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cPal.HeaderText = L '配色' 'Colour'; $cPal.Name = 'palette'; $cPal.ReadOnly = $true; $cPal.FillWeight = 14
-  $cPick = New-Object Windows.Forms.DataGridViewButtonColumn; $cPick.HeaderText = ''; $cPick.Name = 'pick'; $cPick.Text = '...'; $cPick.UseColumnTextForButtonValue = $true; $cPick.FillWeight = 6; $cPick.FlatStyle = 'Flat'
+  $cPal = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cPal.HeaderText = L '配色(点击更改)' 'Colour (click)'; $cPal.Name = 'palette'; $cPal.ReadOnly = $true; $cPal.FillWeight = 18
   $cStat = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cStat.HeaderText = L '状态' 'Status'; $cStat.Name = 'status'; $cStat.ReadOnly = $true; $cStat.FillWeight = 14
-  foreach ($col in @($cName, $cId, $cProv, $cPal, $cPick, $cStat)) { [void]$grid.Columns.Add($col) }
+  foreach ($col in @($cName, $cId, $cProv, $cPal, $cStat)) { [void]$grid.Columns.Add($col) }
 
   function Get-Swatch($spec) {
     if ($spec -eq 'official') { return (C '#D97757') }
@@ -128,7 +127,7 @@ function Show-Manager {
     $idx = $grid.Rows.Add(); $r = $grid.Rows[$idx]
     $r.Cells['name'].Value = $i.name; $r.Cells['id'].Value = $i.id
     if ($i.kind -eq 'official') {
-      $r.Cells['provider'].Value = $provText['__official']; $r.Cells['provider'].ReadOnly = $true; $r.Cells['pick'].ReadOnly = $true; Set-PaletteCell $r 'official'
+      $r.Cells['provider'].Value = $provText['__official']; $r.Cells['provider'].ReadOnly = $true; Set-PaletteCell $r 'official'
     } else {
       $pid_ = $(if ($i.provider -and $provText.Contains([string]$i.provider)) { [string]$i.provider } else { '' })
       $r.Cells['provider'].Value = $provText[$pid_]; Set-PaletteCell $r ([string]$i.palette)
@@ -157,8 +156,8 @@ function Show-Manager {
   # ---- icon preview card + actions
   $cardSide = New-Card 894 108 322 440
   $pic = New-Object Windows.Forms.PictureBox; $pic.Location = New-Object Drawing.Point(20, 18); $pic.Size = New-Object Drawing.Size(96, 96); $pic.SizeMode = 'Zoom'; $pic.BackColor = [Drawing.Color]::White
-  $lblPrev = New-Label (L '图标预览' 'Icon preview') 128 22 180 26 $fHead $SLATE
-  $lblPrev2 = New-Label (L '用于桌面、任务栏、系统托盘' 'Desktop, taskbar and tray') 128 52 188 58 $fSmall $GRAY
+  $lblPrev = New-Label (L '图标预览' 'Icon preview') 128 20 180 34 $fHead $SLATE
+  $lblPrev2 = New-Label (L '用于桌面、任务栏、系统托盘' 'Desktop, taskbar and tray') 128 58 188 56 $fSmall $GRAY
   function Show-Preview {
     if ($grid.CurrentRow -eq $null) { return }
     $spec = [string]$grid.CurrentRow.Cells['palette'].Value
@@ -174,9 +173,10 @@ function Show-Manager {
 
   $menu = New-Object Windows.Forms.ContextMenuStrip; $menu.Font = $fBody
   $script:pickRow = $null
-  $grid.Add_CellContentClick({
+  $grid.Add_CellClick({
     param($s, $e)
-    if ($e.RowIndex -lt 0 -or $grid.Columns[$e.ColumnIndex].Name -ne 'pick') { return }
+    if ($e.RowIndex -lt 0 -or $grid.Columns[$e.ColumnIndex].Name -ne 'palette') { return }
+    if ([string]$grid.Rows[$e.RowIndex].Cells['id'].Value -eq 'official') { return }
     $script:pickRow = $grid.Rows[$e.RowIndex]; $menu.Items.Clear()
     foreach ($n in $palNames) { $it = $menu.Items.Add($n); $it.Tag = $n; $bm = New-Object Drawing.Bitmap 14, 14; $g = [Drawing.Graphics]::FromImage($bm); $g.Clear((Get-Swatch $n)); $g.Dispose(); $it.Image = $bm }
     $cu = $menu.Items.Add((L '自定义颜色…' 'Custom colour...')); $cu.Tag = '*custom'
@@ -239,7 +239,7 @@ function Show-Manager {
 
   # ---- sync & behaviour card
   $cardSet = New-Card 24 564 1192 242
-  $lblSet = New-Label (L '同步与行为' 'Sync and behaviour') 20 12 400 28 $fHead $SLATE
+  $lblSet = New-Label (L '同步与行为' 'Sync and behaviour') 20 10 400 34 $fHead $SLATE
   $chkSync = New-Check (L '在各窗口间同步会话(后台)' 'Sync sessions across windows (background)') 18 48 1150 ([bool]$cfg.settings.syncSessions)
   $chkSet = New-Check (L '同步固定(置顶)/星标会话的顺序与 MCP 服务器' 'Sync pinned / starred sessions, pin order and MCP servers') 18 80 1150 ([bool]$cfg.settings.syncSettings)
   $chkLive = New-Check (L '实时刷新:空闲且不在前台的窗口会在后台静默重启以载入新会话(忙碌/正在使用的绝不打断)' 'Live refresh: idle, unfocused windows restart silently to load new sessions') 18 112 1150 ([bool]$cfg.settings.liveRefresh)
