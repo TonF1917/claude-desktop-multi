@@ -32,6 +32,7 @@ public static class ShellProp {
   public static uint IdleSeconds() { LII l = new LII(); l.cbSize = (uint)Marshal.SizeOf(typeof(LII)); if (!GetLastInputInfo(ref l)) return 0; return (uint)(((uint)Environment.TickCount - l.dwTime) / 1000); }
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
   public static bool IsVisibleNotMinimized(IntPtr h) { return IsWindowVisible(h) && !IsIconic(h); }
+  public static void Restore(IntPtr h) { ShowWindow(h, 9); }                         // SW_RESTORE
   public static void MinimizeNoActivate(IntPtr h) { ShowWindow(h, 7); }            // SW_SHOWMINNOACTIVE
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
   struct STARTUPINFO { public int cb; public string lpReserved, lpDesktop, lpTitle; public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;

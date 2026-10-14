@@ -127,7 +127,7 @@ function Start-Agent {
   Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$Root\claude-multi.ps1`"", 'agent'
 }
 
-function Invoke-Launch($i, [string]$Url, [switch]$NoAgent, [switch]$Minimized) {
+function Invoke-Launch($i, [string]$Url, [switch]$NoAgent, [switch]$Minimized, [switch]$Show) {
   $pkg = Get-ClaudePackage
   $exe = Join-Path $pkg.InstallLocation 'app\Claude.exe'
   $data = Get-DataDir $i
@@ -151,6 +151,13 @@ function Invoke-Launch($i, [string]$Url, [switch]$NoAgent, [switch]$Minimized) {
     elseif ($args_.Count) { Start-Process $exe -ArgumentList $args_ } else { Start-Process $exe }
   } finally { $env:LOCALAPPDATA = $RealLocal }
   if (-not $NoAgent) { Start-Agent }
+  if ($Show -and -not $Minimized) {       # the user asked for this window: bring it up even if it was sitting minimised
+    for ($k = 0; $k -lt 40; $k++) {
+      $r = @(Get-Roots $i) | Select-Object -First 1
+      if ($r) { $p = Get-Process -Id $r.ProcessId -ErrorAction SilentlyContinue; if ($p -and $p.MainWindowHandle -ne 0) { [ShellProp]::Restore($p.MainWindowHandle); [void][ShellProp]::Foreground($p.MainWindowHandle); break } }
+      Start-Sleep -Milliseconds 250
+    }
+  }
 }
 
 # ---------------------------------------------------------------- icons & shortcuts
@@ -238,7 +245,7 @@ function Invoke-RouteUrl([string]$Url) {
   if (-not $target) { $target = $all | Where-Object kind -eq 'official' | Select-Object -First 1 }
   New-Item -ItemType Directory -Force $StateDir | Out-Null
   Add-Content (Join-Path $StateDir 'route.log') ('{0} -> {1} (want={2}, running={3})' -f (Get-Date -Format s), $target.id, $want, (($running | ForEach-Object id) -join ','))
-  Invoke-Launch $target $Url
+  Invoke-Launch $target $Url -Show
 }
 
 # ---------------------------------------------------------------- session sync
@@ -404,9 +411,12 @@ function Invoke-FocusFix($focusFix, $mains, $all) {   # a silently restarted win
     if (-not $p -or $p.MainWindowHandle -eq 0) { continue }
     $h = $p.MainWindowHandle
     Set-InstanceIdentity $i $m $p                  # the window must leave the official taskbar group the moment it exists
-    if ([ShellProp]::IsVisibleNotMinimized($h)) { [ShellProp]::MinimizeNoActivate($h); $ff.n++ }
-    if ([ShellProp]::ForegroundPid() -eq $m.ProcessId -and $ff.prev -ne [IntPtr]::Zero) { [void][ShellProp]::Foreground($ff.prev) }
-    if ($ff.n -ge 1 -and ((Get-Date) - $ff.started).TotalSeconds -gt 25) { $focusFix.Remove($i.id) }     # settled
+    $age = ((Get-Date) - $ff.started).TotalSeconds
+    if ($age -lt 12) {                                                         # only while the app is still starting up
+      if ([ShellProp]::IsVisibleNotMinimized($h) -and $age -lt 8) { [ShellProp]::MinimizeNoActivate($h); $ff.n++ }
+      if ([ShellProp]::ForegroundPid() -eq $m.ProcessId -and $ff.prev -ne [IntPtr]::Zero -and $age -lt 4) { [void][ShellProp]::Foreground($ff.prev) }
+    }
+    if ($age -ge 12) { $focusFix.Remove($i.id) }                               # from here on the window is the user's: no more interference
   }
 }
 function Invoke-LiveRefresh($cfg, $mains, [uint32]$fgPid, $focusFix) {

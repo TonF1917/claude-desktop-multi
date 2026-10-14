@@ -22,7 +22,7 @@ switch ($Command) {
     }
   }
   'install' { Install-All -Force:$Force; "`nDone. Right-click a Desktop shortcut -> 'Pin to taskbar' (Windows does not let scripts pin)." }
-  'launch'  { Invoke-Launch (Get-Instance $Id) }
+  'launch'  { Invoke-Launch (Get-Instance $Id) -Show }
   'route'   { Invoke-RouteUrl $Url }
   'restart' {
     if ($Url -match '^claudemulti://restart/([A-Za-z0-9_-]+)$') { $Id = $Matches[1] }

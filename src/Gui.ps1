@@ -242,7 +242,7 @@ function Show-Manager {
     $form.Cursor = 'WaitCursor'; Save-Config (Read-GridConfig); Restart-Instance $inst $null; $form.Cursor = 'Default' }
   $btnLaunch = New-Btn (L '启动所选' 'Launch selected') 20 316 282 $true {
     $r = $grid.CurrentRow; if (-not $r) { return }
-    Save-Config (Read-GridConfig); Invoke-Launch (Get-Instance ([string]$r.Cells['id'].Value)) }
+    Save-Config (Read-GridConfig); Invoke-Launch (Get-Instance ([string]$r.Cells['id'].Value)) -Show }
   $btnAll = New-Btn (L '全部启动' 'Launch all') 20 360 282 $false {
     Save-Config (Read-GridConfig); foreach ($i in (Read-Config).instances) { Invoke-Launch $i; Start-Sleep -Seconds 2 } }
   $btnSync = New-Btn (L '立即同步会话' 'Sync sessions now') 20 404 282 $false {
