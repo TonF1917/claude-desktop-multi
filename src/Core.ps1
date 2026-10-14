@@ -23,6 +23,8 @@ function Read-Config {
   if (-not $c.PSObject.Properties['settings']) { $c | Add-Member settings ([pscustomobject]@{}) }
   if (-not $c.settings.PSObject.Properties['syncSessions']) { $c.settings | Add-Member syncSessions $true }
   if (-not $c.settings.PSObject.Properties['protocol'])     { $c.settings | Add-Member protocol 'last' }
+  if (-not $c.settings.PSObject.Properties['liveRefresh'])    { $c.settings | Add-Member liveRefresh $true }
+  if (-not $c.settings.PSObject.Properties['refreshOfficial']) { $c.settings | Add-Member refreshOfficial $false }
   $c
 }
 function Save-Config($cfg) { Write-Utf8 $ConfigPath ($cfg | ConvertTo-Json -Depth 8) }
@@ -121,7 +123,7 @@ function Start-Agent {
   Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$Root\claude-multi.ps1`"", 'agent'
 }
 
-function Invoke-Launch($i, [string]$Url) {
+function Invoke-Launch($i, [string]$Url, [switch]$NoAgent) {
   $pkg = Get-ClaudePackage
   $exe = Join-Path $pkg.InstallLocation 'app\Claude.exe'
   $data = Get-DataDir $i
@@ -142,7 +144,7 @@ function Invoke-Launch($i, [string]$Url) {
     }
     if ($args_.Count) { Start-Process $exe -ArgumentList $args_ } else { Start-Process $exe }
   } finally { $env:LOCALAPPDATA = $RealLocal }
-  Start-Agent
+  if (-not $NoAgent) { Start-Agent }
 }
 
 # ---------------------------------------------------------------- icons & shortcuts
@@ -224,22 +226,28 @@ function Invoke-RouteUrl([string]$Url) {
 }
 
 # ---------------------------------------------------------------- session sync
-function Get-StoreRoots {
-  foreach ($i in (Read-Config).instances) { Get-DataDir $i }
-}
+# The app reads its session list only at start-up (no file watcher, no reload hook), so keeping instances in sync takes two steps:
+#  1) mirror every session file newest-wins into every instance's store (this section), and
+#  2) silently restart a stale instance in the background when it is idle and not in use (Invoke-LiveRefresh below).
+$script:CopiedStamp = @{}       # destination path -> mtime ticks we wrote (lets us tell our copies from the app's own writes)
+$script:StaleSince  = @{}       # instance id -> time of the last file mirrored into its store
+$script:LastRestart = @{}
+$script:Cpu         = @{}
+
+function Get-StoreRoot($i) { Get-DataDir $i }
 function Get-SessionFolders {
-  foreach ($root in Get-StoreRoots) {
-    $cs = Join-Path $root 'claude-code-sessions'
+  foreach ($i in (Read-Config).instances) {
+    $cs = Join-Path (Get-StoreRoot $i) 'claude-code-sessions'
     if (-not (Test-Path $cs)) { continue }
-    foreach ($a in [IO.Directory]::GetDirectories($cs)) { foreach ($o in [IO.Directory]::GetDirectories($a)) { if ($o -notmatch '-backup$') { $o } } }
+    foreach ($a in [IO.Directory]::GetDirectories($cs)) { foreach ($o in [IO.Directory]::GetDirectories($a)) { if ($o -notmatch '-backup$') { [pscustomobject]@{ Path = $o; Id = $i.id } } } }
   }
 }
 function Backup-Sessions {
   $flag = Join-Path $StateDir 'sessions-backed-up'
   if (Test-Path $flag) { return }
   $dst = Join-Path $StateDir ('backup-sessions\' + (Get-Date -Format yyyyMMdd-HHmmss)); $n = 0
-  foreach ($root in Get-StoreRoots) {
-    $cs = Join-Path $root 'claude-code-sessions'
+  foreach ($i in (Read-Config).instances) {
+    $cs = Join-Path (Get-StoreRoot $i) 'claude-code-sessions'
     if (Test-Path $cs) { robocopy $cs (Join-Path $dst ('s' + $n++)) /E /NFL /NDL /NJH /NJS /NP | Out-Null }
   }
   New-Item -ItemType File -Force $flag | Out-Null
@@ -250,7 +258,7 @@ function Invoke-SessionSync {
   if ($folders.Count -lt 2) { return 0 }
   $best = @{}
   foreach ($f in $folders) {
-    foreach ($p in [IO.Directory]::EnumerateFiles($f, 'local_*.json')) {
+    foreach ($p in [IO.Directory]::EnumerateFiles($f.Path, 'local_*.json')) {
       $fi = New-Object IO.FileInfo $p; $n = $fi.Name
       if (-not $best.ContainsKey($n) -or $fi.LastWriteTimeUtc -gt $best[$n].t) { $best[$n] = @{ p = $p; t = $fi.LastWriteTimeUtc } }
     }
@@ -258,10 +266,16 @@ function Invoke-SessionSync {
   $copied = 0
   foreach ($f in $folders) {
     foreach ($n in $best.Keys) {
-      $dst = [IO.Path]::Combine($f, $n); $b = $best[$n]
-      $need = -not [IO.File]::Exists($dst) -or ([IO.File]::GetLastWriteTimeUtc($dst) -lt $b.t.AddSeconds(-1))
+      $dst = [IO.Path]::Combine($f.Path, $n); $b = $best[$n]
+      $isNew = -not [IO.File]::Exists($dst)
+      $need = $isNew -or ([IO.File]::GetLastWriteTimeUtc($dst) -lt $b.t.AddSeconds(-1))
       if ($need -and $dst -ne $b.p) {
-        try { [IO.File]::Copy($b.p, $dst, $true); [IO.File]::SetLastWriteTimeUtc($dst, $b.t); $copied++ } catch { }
+        try {
+          [IO.File]::Copy($b.p, $dst, $true); [IO.File]::SetLastWriteTimeUtc($dst, $b.t)
+          $script:CopiedStamp[$dst] = [IO.File]::GetLastWriteTimeUtc($dst).Ticks
+          if ($isNew) { $script:StaleSince[$f.Id] = Get-Date }     # only a session the instance has never seen makes it stale (updates to known ones do not)
+          $copied++
+        } catch { }
       }
     }
   }
@@ -272,9 +286,59 @@ function Initialize-SessionStores {   # new instances start with the same sessio
   if (-not (Test-Path $src)) { return }
   foreach ($i in (Read-Config).instances) {
     if ($i.kind -eq 'official' -or $i.id -eq '3p') { continue }
-    $dst = Join-Path (Get-DataDir $i) 'claude-code-sessions'
+    $dst = Join-Path (Get-StoreRoot $i) 'claude-code-sessions'
     foreach ($a in [IO.Directory]::GetDirectories($src)) { foreach ($o in [IO.Directory]::GetDirectories($a)) {
       if ($o -notmatch '-backup$') { New-Item -ItemType Directory -Force (Join-Path (Join-Path $dst (Split-Path $a -Leaf)) (Split-Path $o -Leaf)) | Out-Null } } }
+  }
+}
+
+# ---------------------------------------------------------------- live refresh (silent background restart of stale, idle instances)
+function Get-Descendants([int]$rootPid, $procs) {
+  $kids = @{}
+  foreach ($p in $procs) { $k = [int]$p.ParentProcessId; if (-not $kids.ContainsKey($k)) { $kids[$k] = New-Object Collections.ArrayList }; [void]$kids[$k].Add($p) }
+  $out = New-Object Collections.ArrayList; $q = New-Object Collections.Queue; $q.Enqueue($rootPid)
+  while ($q.Count) { $x = $q.Dequeue(); if ($kids.ContainsKey($x)) { foreach ($c in $kids[$x]) { [void]$out.Add($c); $q.Enqueue([int]$c.ProcessId) } } }
+  $out
+}
+function Test-InstanceBusy($i, $rootProc, $procs) {
+  # 1) the app itself rewrote a session file in the last 45 s (a file we did not just mirror)
+  $now = [datetime]::UtcNow
+  $cs = Join-Path (Get-StoreRoot $i) 'claude-code-sessions'
+  if (Test-Path $cs) {
+    foreach ($f in [IO.Directory]::EnumerateFiles($cs, 'local_*.json', [IO.SearchOption]::AllDirectories)) {
+      $t = [IO.File]::GetLastWriteTimeUtc($f)
+      if (($now - $t).TotalSeconds -lt 45 -and $script:CopiedStamp[$f] -ne $t.Ticks) { return $true }
+    }
+  }
+  # 2) a non-Electron child (agent CLI, build tool, ...) burned CPU since the previous check
+  foreach ($c in (Get-Descendants $rootProc.ProcessId $procs)) {
+    if ($c.ExecutablePath -and $c.ExecutablePath -like '*\AnthropicPBC.Claude_*') { continue }
+    try {
+      $cpu = [Diagnostics.Process]::GetProcessById([int]$c.ProcessId).TotalProcessorTime.TotalSeconds
+      $prev = $script:Cpu[[int]$c.ProcessId]; $script:Cpu[[int]$c.ProcessId] = $cpu
+      if ($null -ne $prev -and ($cpu - $prev) -gt 0.5) { return $true }
+    } catch { }
+  }
+  $false
+}
+function Invoke-LiveRefresh($cfg, $mains, [uint32]$fgPid, $focusFix) {
+  if (-not $cfg.settings.liveRefresh) { return }
+  $all = @($cfg.instances); $procs = $null
+  foreach ($m in $mains) {
+    $i = Find-InstanceOf $m $all; if (-not $i) { continue }
+    if ($i.kind -eq 'official' -and -not $cfg.settings.refreshOfficial) { continue }
+    $since = $script:StaleSince[$i.id]; if (-not $since) { continue }
+    if (((Get-Date) - $since).TotalSeconds -lt 8) { continue }                         # let the other instance finish writing
+    if ($m.ProcessId -eq $fgPid) { continue }                                         # never touch the window in use
+    $last = $script:LastRestart[$i.id]; if ($last -and ((Get-Date) - $last).TotalSeconds -lt 120) { continue }
+    if (-not $procs) { $procs = @(Get-CimInstance Win32_Process) }
+    if (Test-InstanceBusy $i $m $procs) { continue }
+    $prev = [ShellProp]::ForegroundWindow()
+    & taskkill.exe /F /T /PID $m.ProcessId | Out-Null; Start-Sleep -Seconds 2
+    $script:StaleSince.Remove($i.id); $script:LastRestart[$i.id] = Get-Date
+    Invoke-Launch $i -NoAgent
+    $focusFix[$i.id] = @{ prev = $prev; until = (Get-Date).AddSeconds(90) }
+    return                                                                            # one restart per cycle
   }
 }
 
@@ -284,7 +348,7 @@ function Invoke-Agent {
   $mutex = New-Object Threading.Mutex($true, 'Local\ClaudeMultiAgent', [ref]$created)
   if (-not $created) { return }
   try {
-    $idleSince = $null; $tick = 0; $lastErr = $null; $applied = @{}
+    $idleSince = $null; $tick = 0; $applied = @{}; $focusFix = @{}
     while ($true) {
       $cfg = Read-Config; $all = @($cfg.instances)
       $mains = @(Get-ClaudeMains)
@@ -300,11 +364,18 @@ function Invoke-Agent {
             [ShellProp]::SetWindowIcon($p.MainWindowHandle, $ico); $applied[$m.ProcessId] = $stamp
           }
         }
+        if ($focusFix.ContainsKey($i.id)) {   # a silently restarted instance must not steal focus
+          $ff = $focusFix[$i.id]
+          if ([ShellProp]::ForegroundPid() -eq $m.ProcessId -and $ff.prev -ne [IntPtr]::Zero) { [void][ShellProp]::Foreground($ff.prev); $focusFix.Remove($i.id) }
+          elseif ((Get-Date) -gt $ff.until) { $focusFix.Remove($i.id) }
+        }
         if ($m.ProcessId -eq $fg) { $s = Read-State; if ($s.lastActive -ne $i.id) { Save-State ([pscustomobject]@{ lastActive = $i.id }) } }
       }
-      if ($tick % 5 -eq 0) {
+      if ($tick % 3 -eq 0) {
         Register-Protocol
-        if ($cfg.settings.syncSessions -and $mains.Count -gt 0) { try { Backup-Sessions; Initialize-SessionStores; [void](Invoke-SessionSync) } catch { $lastErr = $_ } }
+        if ($cfg.settings.syncSessions -and $mains.Count -gt 0) {
+          try { Backup-Sessions; Initialize-SessionStores; [void](Invoke-SessionSync); Invoke-LiveRefresh $cfg $mains $fg $focusFix } catch { Add-Content (Join-Path $StateDir 'agent.log') ("{0} {1}" -f (Get-Date -Format s), $_) }
+        }
       }
       if ($mains.Count -eq 0) { if (-not $idleSince) { $idleSince = Get-Date } elseif (((Get-Date) - $idleSince).TotalSeconds -gt 90) { break } } else { $idleSince = $null }
       $tick++; Start-Sleep -Seconds 2

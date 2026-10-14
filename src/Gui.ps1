@@ -21,23 +21,28 @@ function Show-Manager {
 
   $form = New-Object Windows.Forms.Form
   $form.Text = L 'Claude 多开管理器' 'Claude Multi Manager'
-  $form.Font = $font; $form.StartPosition = 'CenterScreen'; $form.ClientSize = New-Object Drawing.Size(1200, 680)
+  $form.Font = $font; $form.StartPosition = 'CenterScreen'; $form.ClientSize = New-Object Drawing.Size(1200, 740)
   $form.MinimumSize = New-Object Drawing.Size(1000, 600)
 
   # ---- grid
   $grid = New-Object Windows.Forms.DataGridView
-  $grid.Location = '12,12'; $grid.Size = '830,480'; $grid.ColumnHeadersHeightSizeMode = 'DisableResizing'; $grid.ColumnHeadersHeight = 36; $grid.Anchor = 'Top,Left,Bottom,Right'
+  $grid.Location = '12,12'; $grid.Size = '830,470'; $grid.ColumnHeadersHeightSizeMode = 'DisableResizing'; $grid.ColumnHeadersHeight = 36; $grid.Anchor = 'Top,Left,Bottom,Right'
   $grid.AllowUserToAddRows = $false; $grid.AllowUserToDeleteRows = $false; $grid.RowHeadersVisible = $false
   $grid.SelectionMode = 'FullRowSelect'; $grid.MultiSelect = $false; $grid.AutoSizeColumnsMode = 'Fill'; $grid.BackgroundColor = 'White'
-  $grid.RowTemplate.Height = 30
+  $grid.RowTemplate.Height = 30; $grid.EditMode = 'EditOnEnter'
   $cName = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cName.HeaderText = L '名称' 'Name'; $cName.Name = 'name'; $cName.FillWeight = 22
   $cId = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cId.HeaderText = 'ID'; $cId.Name = 'id'; $cId.ReadOnly = $true; $cId.FillWeight = 10
   $cProv = New-Object Windows.Forms.DataGridViewComboBoxColumn; $cProv.HeaderText = L '供应商' 'Provider'; $cProv.Name = 'provider'; $cProv.FillWeight = 34
-  $cProv.DisplayMember = 'Text'; $cProv.ValueMember = 'Value'; $cProv.FlatStyle = 'Flat'
-  $opts = @([pscustomobject]@{ Value = '__official'; Text = L '官方订阅' 'Official subscription' },
-            [pscustomobject]@{ Value = ''; Text = L '跟随 cc-switch 当前选择' 'Follow cc-switch selection' })
-  foreach ($p in $providers) { $opts += [pscustomobject]@{ Value = $p.id; Text = ('{0}  (direct)' -f $p.name) } }
-  $cProv.DataSource = $opts
+  $cProv.FlatStyle = 'Flat'
+  $provText = [ordered]@{ '__official' = (L '官方订阅' 'Official subscription'); '' = (L '跟随 cc-switch 当前选择' 'Follow cc-switch selection') }
+  $provFmt = @{}
+  foreach ($p in $providers) {
+    $fmt = [string]$p.meta.apiFormat; $provFmt[[string]$p.id] = $fmt
+    $suffix = if ($fmt -and $fmt -ne 'anthropic') { L '  (需经 cc-switch 网关)' '  (needs the cc-switch gateway)' } else { L '  (直连上游)' '  (direct)' }
+    $provText[[string]$p.id] = ($p.name + $suffix)
+  }
+  foreach ($k in $provText.Keys) { [void]$cProv.Items.Add($provText[$k]) }
+  function Get-ProvId([string]$text) { foreach ($k in $provText.Keys) { if ($provText[$k] -eq $text) { return [string]$k } }; '' }
   $cPal = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cPal.HeaderText = L '配色' 'Palette'; $cPal.Name = 'palette'; $cPal.ReadOnly = $true; $cPal.FillWeight = 16
   $cPick = New-Object Windows.Forms.DataGridViewButtonColumn; $cPick.HeaderText = ''; $cPick.Name = 'pick'; $cPick.Text = '…'; $cPick.UseColumnTextForButtonValue = $true; $cPick.FillWeight = 6
   $cStat = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cStat.HeaderText = L '状态' 'Status'; $cStat.Name = 'status'; $cStat.ReadOnly = $true; $cStat.FillWeight = 14
@@ -62,14 +67,27 @@ function Show-Manager {
     $r = $grid.Rows[$idx]
     $r.Cells['name'].Value = $i.name; $r.Cells['id'].Value = $i.id
     if ($i.kind -eq 'official') {
-      $r.Cells['provider'].Value = '__official'; $r.Cells['provider'].ReadOnly = $true; $r.Cells['pick'].ReadOnly = $true
+      $r.Cells['provider'].Value = $provText['__official']; $r.Cells['provider'].ReadOnly = $true; $r.Cells['pick'].ReadOnly = $true
       Set-PaletteCell $r 'official'
     } else {
-      $r.Cells['provider'].Value = $(if ($i.provider) { [string]$i.provider } else { '' })
+      $pid_ = $(if ($i.provider -and $provText.ContainsKey([string]$i.provider)) { [string]$i.provider } else { '' })
+      $r.Cells['provider'].Value = $provText[$pid_]
       Set-PaletteCell $r ([string]$i.palette)
     }
   }
   foreach ($i in $cfg.instances) { Add-InstanceRow $i }
+  $grid.Add_DataError({ param($s, $e) $e.ThrowException = $false })
+  $grid.Add_CurrentCellDirtyStateChanged({ if ($grid.IsCurrentCellDirty) { $grid.CommitEdit('CurrentCellChange') } })
+  $grid.Add_CellValueChanged({
+    param($s, $e)
+    if ($e.RowIndex -lt 0 -or $grid.Columns[$e.ColumnIndex].Name -ne 'provider') { return }
+    $v = Get-ProvId ([string]$grid.Rows[$e.RowIndex].Cells['provider'].Value)
+    if ($v -eq '__official' -and [string]$grid.Rows[$e.RowIndex].Cells['id'].Value -ne 'official') { $grid.Rows[$e.RowIndex].Cells['provider'].Value = $provText['']; return }
+    if ($v -and $v -ne '__official' -and $provFmt[$v] -and $provFmt[$v] -ne 'anthropic') {
+      [void][Windows.Forms.MessageBox]::Show((L '该供应商使用非 Anthropic 接口,必须经 cc-switch 网关,不能直连。已改回“跟随”。' 'This provider is not Anthropic-format and must go through the cc-switch gateway; reverted to "Follow".'))
+      $grid.Rows[$e.RowIndex].Cells['provider'].Value = $provText['']
+    }
+  })
 
   # ---- preview
   $pic = New-Object Windows.Forms.PictureBox; $pic.Location = '860,12'; $pic.Size = '128,128'; $pic.SizeMode = 'Zoom'; $pic.Anchor = 'Top,Right'
@@ -120,6 +138,7 @@ function Show-Manager {
     $b.Anchor = 'Top,Right'; $b.Add_Click($handler); $form.Controls.Add($b); $b
   }
   function Read-GridConfig {          # grid -> config object (keeps official/primary kinds untouched)
+    [void]$grid.EndEdit(); [void]$grid.CommitEdit('CurrentCellChange')
     $c = Read-Config
     foreach ($row in $grid.Rows) {
       $i = $c.instances | Where-Object id -eq ([string]$row.Cells['id'].Value)
@@ -127,11 +146,13 @@ function Show-Manager {
       Set-Prop $i 'name' ([string]$row.Cells['name'].Value)
       if ($i.kind -ne 'official') {
         Set-Prop $i 'palette' ([string]$row.Cells['palette'].Value)
-        $pv = [string]$row.Cells['provider'].Value
+        $pv = Get-ProvId ([string]$row.Cells['provider'].Value)
         if ($pv) { Set-Prop $i 'provider' $pv } elseif ($i.PSObject.Properties['provider']) { $i.PSObject.Properties.Remove('provider') }
       }
     }
     $c.settings.syncSessions = $chkSync.Checked
+    $c.settings.liveRefresh = $chkLive.Checked
+    $c.settings.refreshOfficial = $chkOff.Checked
     $c.settings.protocol = $(if ($cmbProto.SelectedIndex -ge 0 -and $cmbProto.SelectedIndex -lt $protoIds.Count) { $protoIds[$cmbProto.SelectedIndex] } else { 'last' })
     $c
   }
@@ -183,16 +204,20 @@ function Show-Manager {
 
   # ---- settings strip
   $chkSync = New-Object Windows.Forms.CheckBox; $chkSync.Text = L '在各实例间同步会话(后台)' 'Sync sessions across instances (background)'
-  $chkSync.Location = '14,506'; $chkSync.Size = '700,28'; $chkSync.Anchor = 'Bottom,Left'; $chkSync.Checked = [bool]$cfg.settings.syncSessions
-  $lblProto = New-Object Windows.Forms.Label; $lblProto.Text = L 'claude:// 链接打开到:' 'Open claude:// links in:'; $lblProto.Location = '14,546'; $lblProto.Size = '300,28'; $lblProto.Anchor = 'Bottom,Left'
-  $cmbProto = New-Object Windows.Forms.ComboBox; $cmbProto.DropDownStyle = 'DropDownList'; $cmbProto.Location = '320,542'; $cmbProto.Size = '360,28'; $cmbProto.Anchor = 'Bottom,Left'
+  $chkSync.Location = '14,500'; $chkSync.Size = '1100,28'; $chkSync.Anchor = 'Bottom,Left'; $chkSync.Checked = [bool]$cfg.settings.syncSessions
+  $chkLive = New-Object Windows.Forms.CheckBox; $chkLive.Text = L '实时刷新:其他窗口有新会话时,空闲且不在前台的实例会在后台静默重启以载入(忙碌/正在使用的窗口绝不打断)' 'Live refresh: when another window has new sessions, an idle, unfocused instance restarts silently in the background to load them (busy or focused windows are never touched)'
+  $chkLive.Location = '14,530'; $chkLive.Size = '1170,28'; $chkLive.Anchor = 'Bottom,Left'; $chkLive.Checked = [bool]$cfg.settings.liveRefresh
+  $chkOff = New-Object Windows.Forms.CheckBox; $chkOff.Text = L '同时对官方实例启用实时刷新(默认关闭:官方窗口里可能有未发送的草稿或正在运行的会话)' 'Also live-refresh the official instance (off by default: it may hold unsent drafts or running sessions)'
+  $chkOff.Location = '14,558'; $chkOff.Size = '1170,28'; $chkOff.Anchor = 'Bottom,Left'; $chkOff.Checked = [bool]$cfg.settings.refreshOfficial
+  $lblProto = New-Object Windows.Forms.Label; $lblProto.Text = L 'claude:// 链接打开到:' 'Open claude:// links in:'; $lblProto.Location = '14,590'; $lblProto.Size = '300,28'; $lblProto.Anchor = 'Bottom,Left'
+  $cmbProto = New-Object Windows.Forms.ComboBox; $cmbProto.DropDownStyle = 'DropDownList'; $cmbProto.Location = '320,586'; $cmbProto.Size = '360,28'; $cmbProto.Anchor = 'Bottom,Left'
   $protoIds = @('last') + @($cfg.instances | ForEach-Object { [string]$_.id })
   [void]$cmbProto.Items.Add((L '最近使用的实例' 'Last used instance')); foreach ($i in $cfg.instances) { [void]$cmbProto.Items.Add([string]$i.name) }
   $cmbProto.SelectedIndex = [Math]::Max(0, [array]::IndexOf($protoIds, [string]$cfg.settings.protocol))
-  $hint = New-Object Windows.Forms.Label; $hint.Location = '14,586'; $hint.Size = '1170,56'; $hint.Anchor = 'Bottom,Left,Right'; $hint.ForeColor = 'DimGray'
+  $hint = New-Object Windows.Forms.Label; $hint.Location = '14,630'; $hint.Size = '1170,70'; $hint.Anchor = 'Bottom,Left,Right'; $hint.ForeColor = 'DimGray'
   $hint.Text = if ($providers.Count -eq 0) { L '未读取到 cc-switch 供应商(需要 python 或 sqlite3);仍可使用“跟随 cc-switch”。' 'No cc-switch providers found (needs python or sqlite3); "Follow cc-switch" still works.' }
                else { L '“跟随”共用 cc-switch 网关;选具体供应商则该实例直连其上游,可与其他实例同时使用不同供应商。' '"Follow" shares the cc-switch gateway; a specific provider connects that instance directly, so instances can use different providers at once.' }
-  foreach ($ctl in @($grid, $pic, $picLabel, $chkSync, $lblProto, $cmbProto, $hint)) { $form.Controls.Add($ctl) }
+  foreach ($ctl in @($grid, $pic, $picLabel, $chkSync, $chkLive, $chkOff, $lblProto, $cmbProto, $hint)) { $form.Controls.Add($ctl) }
 
   # ---- live status
   $timer = New-Object Windows.Forms.Timer; $timer.Interval = 3000

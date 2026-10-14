@@ -16,6 +16,8 @@
                   ],
     "settings":  {
                      "syncSessions":  true,
-                     "protocol":  "last"
+                     "protocol":  "last",
+                     "liveRefresh":  true,
+                     "refreshOfficial":  false
                  }
 }

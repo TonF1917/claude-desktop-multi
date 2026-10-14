@@ -2,13 +2,17 @@
 function Invoke-CcSql([string]$sql) {
   $db = Join-Path $env:USERPROFILE '.cc-switch\cc-switch.db'
   if (-not (Test-Path $db)) { return $null }
-  $py = Get-Command python -ErrorAction SilentlyContinue
+  try {                                                   # 1) winsqlite3.dll (built into Windows)
+    $rows = [WinSqlite]::Query($db, $sql)
+    return @($rows | ForEach-Object { $o = [ordered]@{}; foreach ($k in $_.Keys) { $o[$k] = $_[$k] }; [pscustomobject]$o })
+  } catch { }
+  $py = Get-Command python -ErrorAction SilentlyContinue                                  # 2) python
   if ($py) {
-    $code = "import sqlite3,json,sys;c=sqlite3.connect('file:'+sys.argv[1].replace('\\','/')+'?mode=ro',uri=True);c.row_factory=sqlite3.Row;print(json.dumps([dict(r) for r in c.execute(sys.argv[2])],ensure_ascii=False))"
+    $code = "import sqlite3,json,sys;c=sqlite3.connect('file:'+sys.argv[1].replace('\','/')+'?mode=ro',uri=True);c.row_factory=sqlite3.Row;print(json.dumps([dict(r) for r in c.execute(sys.argv[2])],ensure_ascii=False))"
     $out = & $py.Source -I -c $code $db $sql 2>$null
     if ($LASTEXITCODE -eq 0 -and $out) { return ($out -join '' | ConvertFrom-Json) }
   }
-  $sq = Get-Command sqlite3 -ErrorAction SilentlyContinue
+  $sq = Get-Command sqlite3 -ErrorAction SilentlyContinue                                  # 3) sqlite3.exe
   if ($sq) {
     $out = & $sq.Source -readonly -json $db $sql 2>$null
     if ($LASTEXITCODE -eq 0 -and $out) { return ($out -join '' | ConvertFrom-Json) }
@@ -22,7 +26,7 @@ function Get-CcProviders {   # Claude Desktop providers known to cc-switch (excl
     if (-not $r -or $r.id -eq 'claude-desktop-official') { continue }
     $s = try { $r.settings_config | ConvertFrom-Json } catch { $null }
     $m = try { $r.meta | ConvertFrom-Json } catch { $null }
-    [pscustomobject]@{ id = $r.id; name = $r.name; current = [bool]$r.is_current; settings = $s; meta = $m }
+    [pscustomobject]@{ id = $r.id; name = $r.name; current = ([string]$r.is_current -eq '1' -or $r.is_current -eq $true); settings = $s; meta = $m }
   }
 }
 

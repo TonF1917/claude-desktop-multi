@@ -23,6 +23,15 @@ public static class ShellProp {
 
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  public static IntPtr ForegroundWindow() { return GetForegroundWindow(); }
+  public static bool Foreground(IntPtr h) {          // the ALT tap lets a background process take the foreground
+    if (IsIconic(h)) ShowWindow(h, 9);
+    keybd_event(0x12, 0, 0, UIntPtr.Zero); bool ok = SetForegroundWindow(h); keybd_event(0x12, 0, 2, UIntPtr.Zero); return ok;
+  }
   public static uint ForegroundPid() { uint p; GetWindowThreadProcessId(GetForegroundWindow(), out p); return p; }
 
   static readonly Guid FMT = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
@@ -82,5 +91,45 @@ public static class ShellProp {
     object o = Activator.CreateInstance(t);
     ((IPersistFile)o).Load(lnk, 0);
     return Get((IPropertyStore)o, 5);
+  }
+}
+
+// Minimal read-only SQLite access through the winsqlite3.dll that ships with Windows 10/11 (no python / sqlite3.exe needed).
+public static class WinSqlite {
+  const string L = "winsqlite3.dll";
+  [DllImport(L, CallingConvention = CallingConvention.Cdecl)] static extern int sqlite3_open_v2(byte[] filename, out IntPtr db, int flags, IntPtr vfs);
+  [DllImport(L, CallingConvention = CallingConvention.Cdecl)] static extern int sqlite3_close(IntPtr db);
+  [DllImport(L, CallingConvention = CallingConvention.Cdecl)] static extern int sqlite3_prepare_v2(IntPtr db, byte[] sql, int n, out IntPtr stmt, IntPtr tail);
+  [DllImport(L, CallingConvention = CallingConvention.Cdecl)] static extern int sqlite3_step(IntPtr stmt);
+  [DllImport(L, CallingConvention = CallingConvention.Cdecl)] static extern int sqlite3_column_count(IntPtr stmt);
+  [DllImport(L, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr sqlite3_column_text(IntPtr stmt, int i);
+  [DllImport(L, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr sqlite3_column_name(IntPtr stmt, int i);
+  [DllImport(L, CallingConvention = CallingConvention.Cdecl)] static extern int sqlite3_finalize(IntPtr stmt);
+
+  static string Utf8(IntPtr p) {
+    if (p == IntPtr.Zero) return null;
+    int n = 0; while (Marshal.ReadByte(p, n) != 0) n++;
+    byte[] b = new byte[n]; Marshal.Copy(p, b, 0, n); return System.Text.Encoding.UTF8.GetString(b);
+  }
+  static byte[] Z(string s) { return System.Text.Encoding.UTF8.GetBytes(s + "\0"); }
+
+  public static System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>> Query(string path, string sql) {
+    var rows = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>>();
+    IntPtr db;
+    string uri = new Uri(path).AbsoluteUri;                               // file:///C:/... (percent-encoded)
+    if (sqlite3_open_v2(Z(uri), out db, 0x01 | 0x40, IntPtr.Zero) != 0) { if (db != IntPtr.Zero) sqlite3_close(db); throw new Exception("cannot open " + path); }
+    try {
+      IntPtr st;
+      if (sqlite3_prepare_v2(db, Z(sql), -1, out st, IntPtr.Zero) != 0) throw new Exception("bad sql");
+      try {
+        int n = sqlite3_column_count(st);
+        while (sqlite3_step(st) == 100) {
+          var r = new System.Collections.Generic.Dictionary<string, string>();
+          for (int i = 0; i < n; i++) r[Utf8(sqlite3_column_name(st, i))] = Utf8(sqlite3_column_text(st, i));
+          rows.Add(r);
+        }
+      } finally { sqlite3_finalize(st); }
+    } finally { sqlite3_close(db); }
+    return rows;
   }
 }

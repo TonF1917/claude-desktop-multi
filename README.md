@@ -47,7 +47,9 @@ Other commands: `list`, `remove -Id <id>`, `icons -Force` (regenerate), `uninsta
 
 ## Sessions and `claude://` links
 
-* **Session sync** (on by default, a tiny background agent while any instance runs): every `local_*.json` session file is mirrored newest-wins into the session folders of all instances; nothing is ever deleted and the first sync makes a backup in `~\.claude-multiackup-sessions`. The underlying transcripts live in `~\.claude` and are shared natively. An instance reads its session list when it starts, so a session created elsewhere appears after that instance is restarted or reloaded.
+* **Session sync + live refresh.** The app reads its session list only when it starts (it has no file watcher and no reload hook), so there is no way to push a new session into a *running* window. This tool therefore does two things in a background agent (running while any instance runs):
+  1. every `local_*.json` session file is mirrored newest-wins into the session folders of all instances within seconds (nothing is deleted; the first sync backs everything up to `~\.claude-multi\backup-sessions`; transcripts in `~\.claude` are shared natively);
+  2. when a session appears that another instance has never seen, that instance is restarted **silently in the background** (about 10-45 s): only if it is not the focused window, has not written a session file in the last 45 s, and none of its agent/tool child processes is using CPU. The restarted window does not take the focus back. Busy or focused windows are never touched; they refresh as soon as they become idle. The official instance is excluded unless you tick *Also live-refresh the official instance* in the GUI (it may hold unsent drafts).
 * **`claude://` links** are routed by `run.vbs` to the instance you last used (or a fixed one, chosen in the GUI). If it is already running the link is handed to that window; otherwise it is started with the link. The agent re-asserts the handler because Claude re-registers itself whenever it starts.
 
 ## Using cc-switch
