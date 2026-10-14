@@ -376,6 +376,7 @@ function Invoke-Agent {
             [void][ShellProp]::SetWindowIdentity($p.MainWindowHandle, (Get-Aumid $i), (Get-Shim $i), "$ico,0", $i.name)
             [ShellProp]::SetWindowIcon($p.MainWindowHandle, $ico); $applied[$m.ProcessId] = $stamp
           }
+          [void][TrayIcon]::Apply([uint32]$m.ProcessId, $ico, $i.name)        # tray (notification area) icon + tooltip
         }
         if ($focusFix.ContainsKey($i.id)) {   # a silently restarted instance must not steal focus
           $ff = $focusFix[$i.id]

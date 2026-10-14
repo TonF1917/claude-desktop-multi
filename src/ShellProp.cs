@@ -133,3 +133,37 @@ public static class WinSqlite {
     return rows;
   }
 }
+
+// Re-skins the notification-area (tray) icon that an Electron window of another process owns.
+public static class TrayIcon {
+  delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr LoadImage(IntPtr hi, string f, uint t, int cx, int cy, uint fl);
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct NID { public int cbSize; public IntPtr hWnd; public uint uID; public uint uFlags; public uint uCallbackMessage; public IntPtr hIcon;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szTip; public uint dwState; public uint dwStateMask;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string szInfo; public uint uTimeoutOrVersion;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string szInfoTitle; public uint dwInfoFlags; public Guid guidItem; public IntPtr hBalloonIcon; }
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern bool Shell_NotifyIconW(uint msg, ref NID d);
+  static System.Collections.Generic.Dictionary<string, IntPtr> cache = new System.Collections.Generic.Dictionary<string, IntPtr>();
+
+  public static int Apply(uint pid, string ico, string tip) {
+    IntPtr icon;
+    if (!cache.TryGetValue(ico, out icon)) { int s = GetSystemMetrics(49); icon = LoadImage(IntPtr.Zero, ico, 1, s, s, 0x10); cache[ico] = icon; }
+    if (icon == IntPtr.Zero) return 0;
+    int done = 0;
+    EnumWindows((h, l) => {
+      uint p; GetWindowThreadProcessId(h, out p); if (p != pid) return true;
+      var sb = new System.Text.StringBuilder(64); GetClassName(h, sb, 64); if (sb.ToString() != "Electron_NotifyIconHostWindow") return true;
+      for (uint id = 0; id <= 16; id++) {
+        var n = new NID(); n.cbSize = Marshal.SizeOf(typeof(NID)); n.hWnd = h; n.uID = id; n.uFlags = 2 | 4; n.hIcon = icon; n.szTip = tip;
+        if (Shell_NotifyIconW(1, ref n)) done++;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return done;
+  }
+}

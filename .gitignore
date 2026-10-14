@@ -2,3 +2,5 @@
 *.png
 *.bak*
 *.log
+__pycache__/
+*.pyc
