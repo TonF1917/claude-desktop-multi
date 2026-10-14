@@ -1,0 +1,12 @@
+{
+  "inferenceProvider": "gateway",
+  "inferenceGatewayBaseUrl": "http://127.0.0.1:15721/claude-desktop",
+  "inferenceGatewayAuthScheme": "bearer",
+  "inferenceCredentialKind": "static",
+  "inferenceGatewayApiKey": "<your-gateway-key>",
+  "disableDeploymentModeChooser": true,
+  "inferenceModels": [
+    { "name": "claude-sonnet-5", "labelOverride": "my-sonnet", "supports1m": true },
+    { "name": "claude-opus-5",   "labelOverride": "my-opus",   "supports1m": true }
+  ]
+}

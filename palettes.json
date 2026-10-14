@@ -1,0 +1,8 @@
+{
+  "violet":     { "hue": 272, "sat": 0.72, "vMin": 0.07, "vMax": 0.45, "glyph": "#EEE4FF" },
+  "gemini":     { "hue": 217, "sat": 0.80, "vMin": 0.10, "vMax": 0.62, "glyph": "#FFFFFF" },
+  "gpt":        { "hue": 163, "sat": 0.85, "vMin": 0.08, "vMax": 0.50, "glyph": "#F2FFFB" },
+  "perplexity": { "hue": 190, "sat": 0.70, "vMin": 0.07, "vMax": 0.42, "glyph": "#E8FBFF" },
+  "deepseek":   { "hue": 229, "sat": 0.82, "vMin": 0.12, "vMax": 0.66, "glyph": "#FFFFFF" },
+  "workbuddy":  { "hue": 168, "sat": 1.00, "vMin": 0.10, "vMax": 0.72, "glyph": "#F0FFFA" }
+}

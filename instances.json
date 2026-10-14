@@ -1,0 +1,17 @@
+{
+  "instances": [
+    {
+      "id": "official",
+      "name": "Claude",
+      "kind": "official",
+      "palette": "official",
+      "isolate": true
+    },
+    {
+      "id": "3p",
+      "name": "Claude 3P",
+      "kind": "cc-switch",
+      "palette": "violet"
+    }
+  ]
+}
