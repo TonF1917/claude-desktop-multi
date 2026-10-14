@@ -1,4 +1,4 @@
-{
+﻿{
     "instances":  [
                       {
                           "id":  "official",
@@ -17,7 +17,7 @@
     "settings":  {
                      "syncSessions":  true,
                      "protocol":  "last",
-                     "liveRefresh":  true,
+                     "liveRefresh":  false,
                      "refreshOfficial":  false,
                      "language":  "en",
                      "syncSettings":  true

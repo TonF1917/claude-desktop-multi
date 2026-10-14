@@ -1,4 +1,4 @@
-# Shared logic for claude-multi (dot-sourced by claude-multi.ps1). Requires $Root to be set.
+﻿# Shared logic for claude-multi (dot-sourced by claude-multi.ps1). Requires $Root to be set.
 $ErrorActionPreference = 'Stop'
 $script:RealLocal     = $env:LOCALAPPDATA                        # captured before any per-instance override
 $script:ConfigPath    = Join-Path $Root 'instances.json'
@@ -27,7 +27,7 @@ function Read-Config {
   if (-not $c.settings.PSObject.Properties['language'])        { $c.settings | Add-Member language 'en' }
   if (-not $c.settings.PSObject.Properties['syncSettings'])    { $c.settings | Add-Member syncSettings $true }
   if (-not $c.settings.PSObject.Properties['notifyReload'])    { $c.settings | Add-Member notifyReload $false }
-  if (-not $c.settings.PSObject.Properties['liveRefresh'])    { $c.settings | Add-Member liveRefresh $true }
+  if (-not $c.settings.PSObject.Properties['liveRefresh'])    { $c.settings | Add-Member liveRefresh $false }
   if (-not $c.settings.PSObject.Properties['refreshOfficial']) { $c.settings | Add-Member refreshOfficial $false }
   $c
 }
