@@ -385,6 +385,16 @@ function Update-Staleness($i, $m) {
   $s.unknown = $unknown
   foreach ($k in @($script:Seen.Keys)) { if ($k -like "$($i.id)|*" -and $k -ne $key) { $script:Seen.Remove($k) } }   # forget old processes
 }
+$script:IdentApplied = @{}
+function Set-InstanceIdentity($i, $m, $p) {
+  if ($i.kind -eq 'official' -or -not $p -or $p.MainWindowHandle -eq 0) { return }
+  $ico = Get-IconPath $i; $stamp = if (Test-Path $ico) { (Get-Item $ico).LastWriteTimeUtc.Ticks } else { 0 }
+  if ([ShellProp]::GetWindowAumid($p.MainWindowHandle) -ne (Get-Aumid $i) -or $script:IdentApplied[$m.ProcessId] -ne $stamp) {
+    [void][ShellProp]::SetWindowIdentity($p.MainWindowHandle, (Get-Aumid $i), (Get-Shim $i), "$ico,0", $i.name)
+    [ShellProp]::SetWindowIcon($p.MainWindowHandle, $ico); $script:IdentApplied[$m.ProcessId] = $stamp
+  }
+  [void][TrayIcon]::Apply([uint32]$m.ProcessId, $ico, $i.name)        # tray (notification area) icon + tooltip
+}
 function Invoke-FocusFix($focusFix, $mains, $all) {   # a silently restarted window stays minimised and never takes the focus
   foreach ($m in $mains) {
     $i = Find-InstanceOf $m $all; if (-not $i -or -not $focusFix.ContainsKey($i.id)) { continue }
@@ -393,6 +403,7 @@ function Invoke-FocusFix($focusFix, $mains, $all) {   # a silently restarted win
     $p = Get-Process -Id $m.ProcessId -ErrorAction SilentlyContinue
     if (-not $p -or $p.MainWindowHandle -eq 0) { continue }
     $h = $p.MainWindowHandle
+    Set-InstanceIdentity $i $m $p                  # the window must leave the official taskbar group the moment it exists
     if ([ShellProp]::IsVisibleNotMinimized($h)) { [ShellProp]::MinimizeNoActivate($h); $ff.n++ }
     if ([ShellProp]::ForegroundPid() -eq $m.ProcessId -and $ff.prev -ne [IntPtr]::Zero) { [void][ShellProp]::Foreground($ff.prev) }
     if ($ff.n -ge 1 -and ((Get-Date) - $ff.started).TotalSeconds -gt 25) { $focusFix.Remove($i.id) }     # settled
@@ -437,14 +448,7 @@ function Invoke-Agent {
         $i = Find-InstanceOf $m $all; if (-not $i) { continue }
         $p = Get-Process -Id $m.ProcessId -ErrorAction SilentlyContinue
         if (-not $p -or $p.MainWindowHandle -eq 0) { continue }
-        if ($i.kind -ne 'official') {   # own taskbar button + icon (re-applied when the icon file changes)
-          $ico = Get-IconPath $i; $stamp = if (Test-Path $ico) { (Get-Item $ico).LastWriteTimeUtc.Ticks } else { 0 }
-          if ([ShellProp]::GetWindowAumid($p.MainWindowHandle) -ne (Get-Aumid $i) -or $applied[$m.ProcessId] -ne $stamp) {
-            [void][ShellProp]::SetWindowIdentity($p.MainWindowHandle, (Get-Aumid $i), (Get-Shim $i), "$ico,0", $i.name)
-            [ShellProp]::SetWindowIcon($p.MainWindowHandle, $ico); $applied[$m.ProcessId] = $stamp
-          }
-          [void][TrayIcon]::Apply([uint32]$m.ProcessId, $ico, $i.name)        # tray (notification area) icon + tooltip
-        }
+        Set-InstanceIdentity $i $m $p
         if ($m.ProcessId -eq $fg) { $s = Read-State; if ($s.lastActive -ne $i.id) { Save-State ([pscustomobject]@{ lastActive = $i.id }) } }
       }
       foreach ($id in @($script:Relaunch.Keys)) {
