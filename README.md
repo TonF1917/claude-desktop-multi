@@ -31,6 +31,8 @@ cd claude-desktop-multi
 .\claude-multi.ps1 install        # icons + shortcuts for every instance in instances.json
 ```
 
+A Desktop shortcut **Claude Multi Manager** opens the GUI (`.\claude-multi.ps1 gui`): choose how many instances you want, which cc-switch provider and which colour each one uses, launch them, sync sessions.
+
 Then right-click each new Desktop shortcut → **Pin to taskbar** (Windows does not allow scripts to pin).
 
 Add another instance (any number, any colour):
@@ -43,12 +45,18 @@ Add another instance (any number, any colour):
 
 Other commands: `list`, `remove -Id <id>`, `icons -Force` (regenerate), `uninstall` (restore official shortcuts, delete extra ones).
 
+## Sessions and `claude://` links
+
+* **Session sync** (on by default, a tiny background agent while any instance runs): every `local_*.json` session file is mirrored newest-wins into the session folders of all instances; nothing is ever deleted and the first sync makes a backup in `~\.claude-multiackup-sessions`. The underlying transcripts live in `~\.claude` and are shared natively. An instance reads its session list when it starts, so a session created elsewhere appears after that instance is restarted or reloaded.
+* **`claude://` links** are routed by `run.vbs` to the instance you last used (or a fixed one, chosen in the GUI). If it is already running the link is handed to that window; otherwise it is started with the link. The agent re-asserts the handler because Claude re-registers itself whenever it starts.
+
 ## Using cc-switch
 
 In cc-switch choose a *Claude Desktop* provider (not "Claude 官方 / Official"). cc-switch then starts its gateway on `127.0.0.1:15721` and writes the profile into `%LOCALAPPDATA%\Claude-3p\configLibrary`. Launching a third-party shortcut afterwards picks it up; if the instance was already running with an older profile it is restarted automatically.
 
 * All `cc-switch` instances follow cc-switch's **currently selected** provider (the gateway routes by that selection).
-* For a different gateway per instance set `"profile": "path\\to\\profile.json"` in `instances.json` (see `examples/profile.example.json`).
+* **Different provider per instance, at the same time:** in the GUI pick a specific provider (or `add -Provider <id>`). That instance gets a profile built from the provider's own base URL / key / model routes and talks to the upstream directly instead of the shared gateway (Anthropic-format providers only; model ids are the real upstream ids).
+* For a hand-written profile per instance set `"profile": "path\\to\\profile.json"` in `instances.json` (see `examples/profile.example.json`).
 * When cc-switch is set to *Official*, third-party instances have no profile and show the normal sign-in screen — that is expected.
 
 ## `instances.json`
@@ -57,8 +65,8 @@ In cc-switch choose a *Claude Desktop* provider (not "Claude 官方 / Official")
 { "instances": [
   { "id": "official", "name": "Claude",    "kind": "official",  "palette": "official", "isolate": true },
   { "id": "3p",       "name": "Claude 3P", "kind": "cc-switch", "palette": "violet" },
-  { "id": "gem",      "name": "Claude Gemini", "kind": "cc-switch", "palette": "gemini" }
-] }
+  { "id": "gem",      "name": "Claude Gemini", "kind": "cc-switch", "palette": "gemini", "provider": "<cc-switch provider id>" }
+], "settings": { "syncSessions": true, "protocol": "last" } }
 ```
 
 `isolate` (official only, default `true`) keeps the official app out of third-party mode even when cc-switch applies a profile — see below.
@@ -70,7 +78,8 @@ In cc-switch choose a *Claude Desktop* provider (not "Claude 官方 / Official")
 3. **`%LOCALAPPDATA%` does.** The 3P data dir is derived from that variable, so each extra instance is started with its own private `LOCALAPPDATA` (`~\.claude-multi\<id>\Local`). Its profile is mirrored from the cc-switch one at launch.
 4. **Official isolation.** With `isolate`, the official app is started with a private `LOCALAPPDATA` whose `Claude-3p` is empty (`Claude` and `Packages` are junctions to the real ones), so it can never be forced into 3P.
 5. **Separate taskbar buttons.** Electron sets the same AppUserModelID for every instance, so they would merge. After start a small helper sets a per-window AppUserModelID and window icon (`SHGetPropertyStoreForWindow`) and the shortcuts carry matching IDs.
-6. **Update-proof.** The install path is resolved from the MSIX package on every launch; nothing is copied or patched, and no version number is stored.
+6. **Icons must not live in `AppData\*\ClaudeMulti`.** Explorer and the taskbar render a blank page for `.ico` files under such a folder (a `.ico` in any other folder works), so icons are generated into `~\.claude-multi\icons`.
+7. **Update-proof.** The install path is resolved from the MSIX package on every launch; nothing is copied or patched, and no version number is stored.
 
 ## Caveats
 

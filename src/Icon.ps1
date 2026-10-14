@@ -56,18 +56,30 @@ function Convert-IconBase($base, $pal) {
   $out
 }
 
+function Get-IcoImage($bmp, $z) {   # classic 32-bit DIB entry (the taskbar/shell render these reliably); 256px uses PNG
+  $b = New-Object Drawing.Bitmap $z, $z; $g = [Drawing.Graphics]::FromImage($b)
+  $g.InterpolationMode = 'HighQualityBicubic'; $g.DrawImage($bmp, 0, 0, $z, $z); $g.Dispose()
+  $ms = New-Object IO.MemoryStream
+  if ($z -ge 256) { $b.Save($ms, [Drawing.Imaging.ImageFormat]::Png); return , $ms.ToArray() }
+  $w = New-Object IO.BinaryWriter $ms
+  $maskRow = [int]([Math]::Ceiling($z / 32.0) * 4)
+  $w.Write([uint32]40); $w.Write([int32]$z); $w.Write([int32]($z * 2)); $w.Write([uint16]1); $w.Write([uint16]32)
+  $w.Write([uint32]0); $w.Write([uint32]($z * $z * 4 + $maskRow * $z)); $w.Write([int32]0); $w.Write([int32]0); $w.Write([uint32]0); $w.Write([uint32]0)
+  for ($y = $z - 1; $y -ge 0; $y--) { for ($x = 0; $x -lt $z; $x++) {
+    $c = $b.GetPixel($x, $y); $w.Write([byte]$c.B); $w.Write([byte]$c.G); $w.Write([byte]$c.R); $w.Write([byte]$c.A) } }
+  $w.Write((New-Object byte[] ($maskRow * $z)))
+  $w.Flush(); , $ms.ToArray()
+}
+
 function Save-Ico($bmp, $path) {
-  $imgs = foreach ($z in 16, 24, 32, 48, 64, 128, 256) {
-    $b = New-Object Drawing.Bitmap $z, $z; $g = [Drawing.Graphics]::FromImage($b)
-    $g.InterpolationMode = 'HighQualityBicubic'; $g.DrawImage($bmp, 0, 0, $z, $z); $g.Dispose()
-    $ms = New-Object IO.MemoryStream; $b.Save($ms, [Drawing.Imaging.ImageFormat]::Png); , @($z, $ms.ToArray())
-  }
+  $sizes = 16, 24, 32, 48, 64, 128, 256
+  $imgs = foreach ($z in $sizes) { , @($z, (Get-IcoImage $bmp $z)) }
   New-Item -ItemType Directory -Force (Split-Path $path) | Out-Null
   $fs = [IO.File]::Create($path); $w = New-Object IO.BinaryWriter $fs
   $w.Write([uint16]0); $w.Write([uint16]1); $w.Write([uint16]$imgs.Count)
   $off = 6 + 16 * $imgs.Count
   foreach ($i in $imgs) { $z = $i[0]; $w.Write([byte]($z % 256)); $w.Write([byte]($z % 256)); $w.Write([byte]0); $w.Write([byte]0)
     $w.Write([uint16]1); $w.Write([uint16]32); $w.Write([uint32]$i[1].Length); $w.Write([uint32]$off); $off += $i[1].Length }
-  foreach ($i in $imgs) { $w.Write($i[1]) }
+  foreach ($i in $imgs) { $w.Write([byte[]]$i[1]) }
   $w.Close(); $fs.Close()
 }

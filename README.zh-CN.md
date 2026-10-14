@@ -31,6 +31,8 @@ cd claude-desktop-multi
 .\claude-multi.ps1 install        # 为 instances.json 中的每个实例生成图标和快捷方式
 ```
 
+桌面上的 **Claude Multi Manager** 快捷方式会打开图形界面(`.\claude-multi.ps1 gui`):选择多开几个、每个用哪个 cc-switch 供应商、什么配色,一键启动、同步会话。
+
 然后在桌面上对每个新快捷方式右键 →「固定到任务栏」(Windows 不允许脚本代为固定)。
 
 增加实例(数量、颜色随意):
@@ -43,12 +45,18 @@ cd claude-desktop-multi
 
 其他命令:`list`、`remove -Id <id>`、`icons -Force`(重新生成图标)、`uninstall`(恢复官方快捷方式并删除额外快捷方式)。
 
+## 会话与 `claude://` 链接
+
+* **会话同步**(默认开启,任一实例运行时由一个很小的后台代理负责):所有 `local_*.json` 会话文件按“最新者优先”镜像到各实例的会话目录,从不删除,首次同步会备份到 `~\.claude-multiackup-sessions`。底层对话记录在 `~\.claude`,本来就是共享的。实例在启动时读取会话列表,所以在别处新建的会话要在该实例重启或重新加载后出现。
+* **`claude://` 链接**由 `run.vbs` 路由到你最近使用的实例(或在界面里固定某一个)。目标已在运行则交给它的窗口,否则带着链接启动它。Claude 每次启动都会重新注册协议,所以后台代理会持续恢复这个处理器。
+
 ## 配合 cc-switch 使用
 
 在 cc-switch 中为 Claude Desktop 选择第三方供应商(不要选「Claude 官方」)。cc-switch 会在 `127.0.0.1:15721` 启动网关,并把配置写入 `%LOCALAPPDATA%\Claude-3p\configLibrary`。之后启动第三方快捷方式即可生效;若该实例已在运行且配置较旧,会自动重启。
 
 * 所有 `cc-switch` 类型实例都跟随 cc-switch **当前选中**的供应商(网关按该选择路由)。
-* 想让某个实例使用不同网关:在 `instances.json` 中设置 `"profile": "路径\\profile.json"`(参见 `examples/profile.example.json`)。
+* **每个实例同时用不同供应商:** 在界面里选具体供应商(或 `add -Provider <id>`)。该实例会用该供应商自己的 base URL / 密钥 / 模型映射生成配置,直连上游而不走共用网关(仅限 Anthropic 格式供应商;模型名使用上游真实 id)。
+* 想为某个实例手写配置:在 `instances.json` 中设置 `"profile": "路径\\profile.json"`(参见 `examples/profile.example.json`)。
 * cc-switch 选「官方」时,第三方实例没有配置,会显示普通登录界面——这是正常的。
 
 ## `instances.json`
@@ -57,8 +65,8 @@ cd claude-desktop-multi
 { "instances": [
   { "id": "official", "name": "Claude",    "kind": "official",  "palette": "official", "isolate": true },
   { "id": "3p",       "name": "Claude 3P", "kind": "cc-switch", "palette": "violet" },
-  { "id": "gem",      "name": "Claude Gemini", "kind": "cc-switch", "palette": "gemini" }
-] }
+  { "id": "gem",      "name": "Claude Gemini", "kind": "cc-switch", "palette": "gemini", "provider": "<cc-switch 供应商 id>" }
+], "settings": { "syncSessions": true, "protocol": "last" } }
 ```
 
 `isolate`(仅官方实例,默认 `true`):即使 cc-switch 应用了第三方配置,官方 App 也不会被切成第三方模式,见下。
@@ -70,7 +78,8 @@ cd claude-desktop-multi
 3. **`%LOCALAPPDATA%` 有效。** 3P 数据目录由该变量推导,因此每个额外实例用各自私有的 `LOCALAPPDATA`(`~\.claude-multi\<id>\Local`)启动,配置在启动时从 cc-switch 写入的那份镜像过来。
 4. **官方隔离。** 开启 `isolate` 后,官方 App 以私有 `LOCALAPPDATA` 启动,其中 `Claude-3p` 为空(`Claude`、`Packages` 是指向真实目录的目录联接),因此永远不会被强制进入 3P。
 5. **独立任务栏按钮。** Electron 给所有实例设置相同的 AppUserModelID,会被合并。启动后由一个小助手通过 `SHGetPropertyStoreForWindow` 给每个窗口设置独立 ID 和图标,快捷方式也带对应 ID。
-6. **更新无忧。** 每次启动都从 MSIX 包解析安装路径,不拷贝、不修改应用,也不记录版本号。
+6. **图标不能放在 `AppData\*\ClaudeMulti` 下。** 资源管理器和任务栏对这类目录里的 `.ico` 只显示空白页(放在其他任何目录都正常),所以图标生成到 `~\.claude-multi\icons`。
+7. **更新无忧。** 每次启动都从 MSIX 包解析安装路径,不拷贝、不修改应用,也不记录版本号。
 
 ## 注意
 
