@@ -347,6 +347,7 @@ function Test-InstanceBusy($i, $rootProc, $procs) {
 $script:Relaunch = @{}
 function Write-AgentLog([string]$m) { try { New-Item -ItemType Directory -Force $StateDir | Out-Null; Add-Content (Join-Path $StateDir 'agent.log') ("{0} {1}" -f (Get-Date -Format s), $m) } catch { } }
 function Restart-Instance($i, $focusFix) {   # kill, wait until it is really gone, apply pending settings, start again (and verify in the agent loop)
+  if (-not (@((Read-Config).instances) | Where-Object id -eq $i.id)) { return }
   $prev = [ShellProp]::ForegroundWindow()
   foreach ($r in @(Get-Roots $i)) { & taskkill.exe /F /T /PID $r.ProcessId | Out-Null }
   for ($k = 0; $k -lt 30; $k++) { if (-not @(Get-Roots $i)) { break }; Start-Sleep -Milliseconds 500 }
@@ -378,6 +379,7 @@ function Update-Staleness($i, $m) {
   $s = $script:Seen[$key]; $unknown = 0
   foreach ($n in $all) { if (-not $s.known.Contains($n)) { $unknown++ } }
   if ($unknown -gt 0 -and $unknown -ne $s.unknown) { $script:StaleSince[$i.id] = Get-Date }        # new session(s) arrived: restart the settle timer
+  if ($unknown -eq 0 -and -not (Test-PendingSettings $i.id)) { $script:StaleSince.Remove($i.id) }    # nothing left to load
   $s.unknown = $unknown
   foreach ($k in @($script:Seen.Keys)) { if ($k -like "$($i.id)|*" -and $k -ne $key) { $script:Seen.Remove($k) } }   # forget old processes
 }

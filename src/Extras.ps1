@@ -40,15 +40,15 @@ function Set-SyncSubset($path, $subset) {
   if (-not (Get-ChildItem (Split-Path $path) -Filter 'claude_desktop_config.json.bak-multi-*' -ErrorAction SilentlyContinue)) {
     Copy-Item $path ($path + '.bak-multi-' + (Get-Date -Format yyyyMMddHHmmss))
   }
-  if ($subset.ContainsKey('mcpServers')) { $d['mcpServers'] = $subset['mcpServers'] }
+  if ($subset.ContainsKey('mcpServers')) { $d['mcpServers'] = $subset['mcpServers'].psobject.BaseObject }
   if (-not $d.ContainsKey('preferences')) { $d['preferences'] = New-Dict }
   if (-not $d['preferences'].ContainsKey('epitaxyPrefs')) { $d['preferences']['epitaxyPrefs'] = New-Dict }
   $e = $d['preferences']['epitaxyPrefs']
   foreach ($k in @($subset.Keys)) {
-    if ($k -like 'starred-*') { $e[$k] = $subset[$k] }
+    if ($k -like 'starred-*') { $e[$k] = $subset[$k].psobject.BaseObject }
     elseif ($k -like 'slice:*') {
       if (-not $e.ContainsKey('dframe-local-slice')) { $e['dframe-local-slice'] = New-Dict }
-      $e['dframe-local-slice'][$k.Substring(6)] = $subset[$k]
+      $e['dframe-local-slice'][$k.Substring(6)] = $subset[$k].psobject.BaseObject
     }
   }
   $tmp = $path + '.tmp'
@@ -60,37 +60,97 @@ function Save-PendingSettings($id, $subset) { New-Item -ItemType Directory -Forc
 function Apply-PendingSettings($i) {
   $f = Join-Path $PendingDir "$($i.id).json"; if (-not (Test-Path $f)) { return }
   $p = (New-Js).DeserializeObject([IO.File]::ReadAllText($f))
-  Set-SyncSubset (Get-CfgPath $i) $p; Remove-Item $f -Force
+  Set-SubsetKeep (Get-CfgPath $i) $p; Remove-Item $f -Force
 }
 
-# One pass: find the instance whose subset changed since the last agreed state and spread it to the others.
+# Membership of "pinned" is not decided by a config file: the app writes isStarred into each session file (mirrored between windows),
+# so the pinned set is derived from those flags; only the ORDER and the other keys follow the "last changed window wins" rule.
+$script:StarCache = @{}
+function Get-FlaggedStars {
+  $best = @{}
+  foreach ($f in Get-SessionFolders) {
+    foreach ($p in [IO.Directory]::EnumerateFiles($f.Path, 'local_*.json')) {
+      $t = [IO.File]::GetLastWriteTimeUtc($p); $n = [IO.Path]::GetFileNameWithoutExtension($p)
+      if (-not $best.ContainsKey($n) -or $t -gt $best[$n].t) { $best[$n] = @{ p = $p; t = $t } }
+    }
+  }
+  $out = [Collections.ArrayList]::new()
+  foreach ($n in ($best.Keys | Sort-Object)) {
+    $e = $best[$n]; $c = $script:StarCache[$e.p]
+    if (-not $c -or $c.t -ne $e.t) {
+      $txt = [IO.File]::ReadAllText($e.p)
+      $c = @{ t = $e.t; star = ($txt -match '"isStarred":true' -and $txt -notmatch '"isArchived":true') }; $script:StarCache[$e.p] = $c
+    }
+    if ($c.star) { [void]$out.Add($n) }
+  }
+  , $out
+}
+function Test-SubsetEmpty($sub) {
+  (@($sub['starred-local-code-sessions']).Count -eq 0) -and (@($sub['slice:pinnedOrder']).Count -eq 0) -and (-not $sub.ContainsKey('mcpServers'))
+}
+function Update-SubsetFromFlags($sub, $flagged, $orderHint) {   # make starred list / pin order agree with the per-session flags
+  if ($flagged.Count -eq 0) { return $sub }
+  $set = New-Object 'Collections.Generic.HashSet[string]'; foreach ($x in $flagged) { [void]$set.Add($x) }
+  $list = [Collections.ArrayList]::new(); $seen = New-Object 'Collections.Generic.HashSet[string]'
+  foreach ($src in @($orderHint, @($sub['starred-local-code-sessions']), $flagged)) {
+    foreach ($x in @($src)) { if ($x -and $set.Contains([string]$x) -and $seen.Add([string]$x)) { [void]$list.Add([string]$x) } }
+  }
+  $sub['starred-local-code-sessions'] = $list
+  $po = [Collections.ArrayList]::new(); $inPo = New-Object 'Collections.Generic.HashSet[string]'
+  foreach ($x in @($sub['slice:pinnedOrder'])) {
+    $s = [string]$x
+    if ($s.StartsWith('code:')) { if ($set.Contains($s.Substring(5)) -and $inPo.Add($s)) { [void]$po.Add($s) } } elseif ($s) { [void]$po.Add($s) }
+  }
+  foreach ($x in $list) { if ($inPo.Add("code:$x")) { [void]$po.Add("code:$x") } }
+  $sub['slice:pinnedOrder'] = $po
+  $sub
+}
+function Set-SubsetKeep($path, $subset) {   # never wipe: an empty list does not overwrite a non-empty one
+  $cur = Get-SyncSubset (Read-CfgDict $path)
+  foreach ($k in @($subset.Keys)) {
+    if (($k -like 'starred-*' -or $k -like 'slice:*') -and @($subset[$k]).Count -eq 0 -and @($cur[$k]).Count -gt 0) { [void]$subset.Remove($k) }
+  }
+  Set-SyncSubset $path $subset
+}
+
+# One pass: find the window whose subset changed since the last agreed state and spread it to the others.
 function Invoke-SettingsSync($cfg, $mains) {
   $all = @($cfg.instances); $running = @{}
   foreach ($m in $mains) { $x = Find-InstanceOf $m $all; if ($x) { $running[$x.id] = $true } }
+  $flagged = Get-FlaggedStars
   $info = @{}
   foreach ($i in $all) {
     $path = Get-CfgPath $i; if (-not (Test-Path $path)) { continue }
-    $sub = Get-SyncSubset (Read-CfgDict $path)
-    $info[$i.id] = @{ i = $i; sub = $sub; h = (Get-SubsetHash $sub); t = (Get-Item $path).LastWriteTimeUtc }
+    $raw = Get-SyncSubset (Read-CfgDict $path)
+    $sub = Update-SubsetFromFlags $raw $flagged $null
+    $info[$i.id] = @{ i = $i; sub = $sub; h = (Get-SubsetHash $sub); t = (Get-Item $path).LastWriteTimeUtc; empty = (Test-SubsetEmpty $raw) }
   }
   if ($info.Count -lt 2) { return }
   $snap = if (Test-Path $SetSnapFile) { (Get-Content $SetSnapFile -Raw).Trim() } else { $null }
+  $cands = @($info.Values | Where-Object { -not $_.empty })           # a fresh/empty window must never win
+  if ($cands.Count -eq 0) { return }
   $winner = $null
-  if (-not $snap) {                                           # first run: the official instance is the source of truth
+  if (-not $snap) {
     $distinct = @($info.Values | ForEach-Object { $_.h } | Sort-Object -Unique)
     if ($distinct.Count -le 1) { Write-Utf8 $SetSnapFile $distinct[0]; return }
-    $winner = if ($info.ContainsKey('official')) { $info['official'] } else { $info.Values | Sort-Object { $_.t } -Descending | Select-Object -First 1 }
+    $winner = if ($info.ContainsKey('official') -and -not $info['official'].empty) { $info['official'] } else { $cands | Sort-Object { $_.t } -Descending | Select-Object -First 1 }
   } else {
-    $changed = @($info.Values | Where-Object { $_.h -ne $snap -and -not (Test-PendingSettings $_.i.id) })
-    if ($changed.Count -eq 0) { return }
-    $winner = $changed | Sort-Object { $_.t } -Descending | Select-Object -First 1
+    $changed = @($cands | Where-Object { $_.h -ne $snap -and -not (Test-PendingSettings $_.i.id) })
+    if ($changed.Count -eq 0) {
+      # nothing "changed" but some window may still lag behind the agreed state (e.g. a new window): bring it to the newest agreed subset
+      $lag = @($info.Values | Where-Object { $_.h -ne $snap -and -not (Test-PendingSettings $_.i.id) })
+      if ($lag.Count -eq 0) { return }
+      $winner = $cands | Sort-Object { $_.t } -Descending | Select-Object -First 1
+    } else { $winner = $changed | Sort-Object { $_.t } -Descending | Select-Object -First 1 }
   }
+  $canon = Update-SubsetFromFlags $winner.sub $flagged $winner.sub['slice:pinnedOrder']
+  $ch = Get-SubsetHash $canon
   foreach ($e in $info.Values) {
-    if ($e.i.id -eq $winner.i.id -or $e.h -eq $winner.h) { continue }
-    if ($running.ContainsKey($e.i.id)) { Save-PendingSettings $e.i.id $winner.sub; $script:StaleSince[$e.i.id] = Get-Date }
-    else { Set-SyncSubset (Get-CfgPath $e.i) $winner.sub }
+    if ($e.h -eq $ch) { continue }
+    if ($running.ContainsKey($e.i.id)) { Save-PendingSettings $e.i.id $canon; $script:StaleSince[$e.i.id] = Get-Date }
+    else { Set-SubsetKeep (Get-CfgPath $e.i) $canon }
   }
-  Write-Utf8 $SetSnapFile $winner.h
+  Write-Utf8 $SetSnapFile $ch
 }
 
 # ---------------------------------------------------------------- same session in two instances
