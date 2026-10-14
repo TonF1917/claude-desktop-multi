@@ -141,10 +141,7 @@ function Invoke-Launch($i, [string]$Url, [switch]$NoAgent, [switch]$Minimized, [
       $primary = ($data -eq $SourceDir)
       $profileTime = if ($primary) { Get-NewestWrite (Join-Path $SourceDir 'configLibrary') }
                      else { $env:LOCALAPPDATA = Get-FakeLocal $i; New-Item -ItemType Directory -Force $data | Out-Null; Sync-Profile $i $data }
-      # a running instance read its profile at start-up: restart it when the profile changed since
-      foreach ($r in Get-Roots $i) {
-        if ($r.CreationDate -lt $profileTime) { & taskkill.exe /F /T /PID $r.ProcessId | Out-Null; Start-Sleep -Seconds 2 }
-      }
+      # a running window is never killed here: a changed profile applies on the next restart (Restart button / quit and reopen)
       $args_ = @("--user-data-dir=`"$data`"") + $args_
     }
     if ($Minimized) { [void][ShellProp]::StartMinNoActivate($exe, ($args_ -join ' ')) }
