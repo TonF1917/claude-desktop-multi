@@ -97,7 +97,7 @@ function Show-Manager {
   $grid.DefaultCellStyle.BackColor = [Drawing.Color]::White; $grid.DefaultCellStyle.ForeColor = $SLATE; $grid.DefaultCellStyle.SelectionBackColor = $SEL; $grid.DefaultCellStyle.SelectionForeColor = $SLATE
   $cName = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cName.HeaderText = L '名称' 'Name'; $cName.Name = 'name'; $cName.FillWeight = 22
   $cId = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cId.HeaderText = 'ID'; $cId.Name = 'id'; $cId.ReadOnly = $true; $cId.FillWeight = 10
-  $cProv = New-Object Windows.Forms.DataGridViewComboBoxColumn; $cProv.HeaderText = L '接口 / 供应商' 'API / provider'; $cProv.Name = 'provider'; $cProv.FillWeight = 34; $cProv.FlatStyle = 'Flat'; $cProv.DisplayStyle = 'Nothing'
+  $cProv = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cProv.ReadOnly = $true; $cProv.HeaderText = L '接口 / 供应商' 'API / provider'; $cProv.Name = 'provider'; $cProv.FillWeight = 34
   $provText = [ordered]@{ '__official' = (L '官方订阅' 'Official subscription'); '' = (L '跟随 cc-switch 当前选择' 'Follow cc-switch selection') }
   $provFmt = @{}
   foreach ($p in $providers) {
@@ -105,7 +105,6 @@ function Show-Manager {
     $suffix = if ($fmt -and $fmt -ne 'anthropic') { L '  (需经 cc-switch 网关)' '  (needs the cc-switch gateway)' } else { L '  (直连上游)' '  (direct)' }
     $provText[[string]$p.id] = ($p.name + $suffix)
   }
-  foreach ($k in $provText.Keys) { [void]$cProv.Items.Add($provText[$k]) }
   function Get-ProvId([string]$text) { foreach ($k in $provText.Keys) { if ($provText[$k] -eq $text) { return [string]$k } }; '' }
   $cPal = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cPal.HeaderText = L '配色(点击更改)' 'Colour (click)'; $cPal.Name = 'palette'; $cPal.ReadOnly = $true; $cPal.FillWeight = 18
   $cStat = New-Object Windows.Forms.DataGridViewTextBoxColumn; $cStat.HeaderText = L '状态' 'Status'; $cStat.Name = 'status'; $cStat.ReadOnly = $true; $cStat.FillWeight = 14
@@ -134,23 +133,7 @@ function Show-Manager {
     }
   }
   foreach ($i in $cfg.instances) { Add-InstanceRow $i }
-  $grid.Add_CellClick({
-    param($s, $e)
-    if ($e.RowIndex -lt 0) { return }
-    $n = $grid.Columns[$e.ColumnIndex].Name
-    if ($n -eq 'provider' -and -not $grid.Rows[$e.RowIndex].Cells['provider'].ReadOnly) { [void]$grid.BeginEdit($true); if ($grid.EditingControl -is [Windows.Forms.ComboBox]) { $grid.EditingControl.DroppedDown = $true } }
-    elseif ($n -eq 'name') { [void]$grid.BeginEdit($false) } })
   $grid.Add_DataError({ param($s, $e) $e.ThrowException = $false })
-  $grid.Add_CurrentCellDirtyStateChanged({ if ($grid.IsCurrentCellDirty) { $grid.CommitEdit('CurrentCellChange') } })
-  $grid.Add_CellValueChanged({
-    param($s, $e)
-    if ($e.RowIndex -lt 0 -or $grid.Columns[$e.ColumnIndex].Name -ne 'provider') { return }
-    $v = Get-ProvId ([string]$grid.Rows[$e.RowIndex].Cells['provider'].Value)
-    if ($v -eq '__official' -and [string]$grid.Rows[$e.RowIndex].Cells['id'].Value -ne 'official') { $grid.Rows[$e.RowIndex].Cells['provider'].Value = $provText['']; return }
-    if ($v -and $v -ne '__official' -and $provFmt[$v] -and $provFmt[$v] -ne 'anthropic') {
-      [void][Windows.Forms.MessageBox]::Show((L '该供应商使用非 Anthropic 接口,必须经 cc-switch 网关,不能直连。已改回“跟随”。' 'This provider is not Anthropic-format and must go through the cc-switch gateway; reverted to "Follow".'))
-      $grid.Rows[$e.RowIndex].Cells['provider'].Value = $provText['']
-    } })
   foreach ($ctl in @($lblGrid, $grid)) { $cardGrid.Controls.Add($ctl) }
 
   # ---- icon preview card + actions
@@ -172,20 +155,42 @@ function Show-Manager {
   $grid.Add_SelectionChanged({ Show-Preview })
 
   $menu = New-Object Windows.Forms.ContextMenuStrip; $menu.Font = $fBody
-  $script:pickRow = $null
+  $script:pickRow = $null; $script:pickMode = ''
+  function Show-Err($ex) {
+    try { New-Item -ItemType Directory -Force $HomeRoot | Out-Null; Add-Content (Join-Path $HomeRoot 'gui-error.log') ("{0} {1}" -f (Get-Date -Format s), $ex) } catch { }
+    [void][Windows.Forms.MessageBox]::Show(("{0}`n`n{1}" -f (L '操作失败(详情已写入 ~\.claude-multi\gui-error.log):' 'Action failed (details in ~\.claude-multi\gui-error.log):'), $ex.Exception.Message))
+  }
   $grid.Add_CellClick({
     param($s, $e)
-    if ($e.RowIndex -lt 0 -or $grid.Columns[$e.ColumnIndex].Name -ne 'palette') { return }
-    if ([string]$grid.Rows[$e.RowIndex].Cells['id'].Value -eq 'official') { return }
-    $script:pickRow = $grid.Rows[$e.RowIndex]; $menu.Items.Clear()
-    foreach ($n in $palNames) { $it = $menu.Items.Add($n); $it.Tag = $n; $bm = New-Object Drawing.Bitmap 14, 14; $g = [Drawing.Graphics]::FromImage($bm); $g.Clear((Get-Swatch $n)); $g.Dispose(); $it.Image = $bm }
-    $cu = $menu.Items.Add((L '自定义颜色…' 'Custom colour...')); $cu.Tag = '*custom'
-    $menu.Show($grid, $grid.PointToClient([Windows.Forms.Cursor]::Position)) })
+    try {
+      if ($e.RowIndex -lt 0) { return }
+      $row = $grid.Rows[$e.RowIndex]; $col = $grid.Columns[$e.ColumnIndex].Name; $isOfficial = ([string]$row.Cells['id'].Value -eq 'official')
+      if ($col -eq 'name') { [void]$grid.BeginEdit($false); return }
+      if ($isOfficial -or ($col -ne 'provider' -and $col -ne 'palette')) { return }
+      $script:pickRow = $row; $script:pickMode = $col; $menu.Items.Clear()
+      if ($col -eq 'provider') {
+        foreach ($k in $provText.Keys) { if ($k -eq '__official') { continue }; $it = $menu.Items.Add([string]$provText[$k]); $it.Tag = [string]$k }
+      } else {
+        foreach ($n in $palNames) { $it = $menu.Items.Add($n); $it.Tag = $n; $bm = New-Object Drawing.Bitmap 14, 14; $g = [Drawing.Graphics]::FromImage($bm); $g.Clear((Get-Swatch $n)); $g.Dispose(); $it.Image = $bm }
+        $cu = $menu.Items.Add((L '自定义颜色…' 'Custom colour...')); $cu.Tag = '*custom'
+      }
+      $menu.Show($grid, $grid.PointToClient([Windows.Forms.Cursor]::Position))
+    } catch { Show-Err $_ } })
   $menu.Add_ItemClicked({
     param($s, $e)
-    $tag = [string]$e.ClickedItem.Tag
-    if ($tag -eq '*custom') { $dlg = New-Object Windows.Forms.ColorDialog; $dlg.FullOpen = $true; if ($dlg.ShowDialog() -ne 'OK') { return }; $tag = '#{0:X2}{1:X2}{2:X2}' -f $dlg.Color.R, $dlg.Color.G, $dlg.Color.B }
-    Set-PaletteCell $script:pickRow $tag; Show-Preview })
+    try {
+      $tag = [string]$e.ClickedItem.Tag
+      if ($script:pickMode -eq 'provider') {
+        if ($tag -and $provFmt[$tag] -and $provFmt[$tag] -ne 'anthropic') {
+          [void][Windows.Forms.MessageBox]::Show((L '该供应商使用非 Anthropic 接口,必须经 cc-switch 网关,不能直连。' 'This provider is not Anthropic-format and must go through the cc-switch gateway; it cannot be used directly.'))
+          return
+        }
+        $script:pickRow.Cells['provider'].Value = $provText[$tag]
+      } else {
+        if ($tag -eq '*custom') { $dlg = New-Object Windows.Forms.ColorDialog; $dlg.FullOpen = $true; if ($dlg.ShowDialog() -ne 'OK') { return }; $tag = '#{0:X2}{1:X2}{2:X2}' -f $dlg.Color.R, $dlg.Color.G, $dlg.Color.B }
+        Set-PaletteCell $script:pickRow $tag; Show-Preview
+      }
+    } catch { Show-Err $_ } })
 
   function Read-GridConfig {
     [void]$grid.EndEdit(); [void]$grid.CommitEdit('CurrentCellChange')

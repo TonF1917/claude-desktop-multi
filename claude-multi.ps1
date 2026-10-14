@@ -14,7 +14,13 @@ $Root = $PSScriptRoot
 . (Join-Path $Root 'src\Core.ps1')
 
 switch ($Command) {
-  'gui'     { . (Join-Path $Root 'src\Gui.ps1'); Show-Manager }
+  'gui'     {
+    . (Join-Path $Root 'src\Gui.ps1')
+    try { Show-Manager } catch {
+      New-Item -ItemType Directory -Force $HomeRoot | Out-Null; Add-Content (Join-Path $HomeRoot 'gui-error.log') ("{0} {1}`n{2}" -f (Get-Date -Format s), $_, $_.ScriptStackTrace)
+      Add-Type -AssemblyName System.Windows.Forms; [void][Windows.Forms.MessageBox]::Show("The manager window hit an error:`n`n$($_.Exception.Message)`n`nDetails: $HomeRoot\gui-error.log")
+    }
+  }
   'install' { Install-All -Force:$Force; "`nDone. Right-click a Desktop shortcut -> 'Pin to taskbar' (Windows does not let scripts pin)." }
   'launch'  { Invoke-Launch (Get-Instance $Id) }
   'route'   { Invoke-RouteUrl $Url }
