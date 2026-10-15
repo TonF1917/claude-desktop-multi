@@ -65,7 +65,8 @@ function Get-ClaudeMains {          # every Claude Desktop main process (not hel
 function Find-InstanceOf($proc, $instances) {
   foreach ($i in $instances) {
     if ($i.kind -eq 'official') { continue }
-    if ($proc.CommandLine.Contains('--user-data-dir="' + (Get-DataDir $i) + '"')) { return $i }
+    $dd = Get-DataDir $i
+    if ($proc.CommandLine -match [regex]::Escape('--user-data-dir') -and $proc.CommandLine -match [regex]::Escape($dd)) { return $i }
   }
   if ($proc.CommandLine -notmatch '--user-data-dir') { return ($instances | Where-Object kind -eq 'official' | Select-Object -First 1) }
 }
