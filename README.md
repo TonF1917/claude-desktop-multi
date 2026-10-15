@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/claude-violet.png" width="128" alt="Claude Multi Violet Icon" />
+</p>
+
 # Claude Desktop: multiple windows with different APIs at the same time
 
 **English** · [简体中文](README.zh-CN.md)

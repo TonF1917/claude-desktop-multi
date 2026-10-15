@@ -1,5 +1,6 @@
 *.ico
 *.png
+!assets/*.png
 *.bak*
 *.log
 __pycache__/

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/claude-violet.png" width="128" alt="Claude 紫色多开图标" />
+</p>
+
 # Claude Desktop 多开:多个窗口同时用不同 API(多 API 同时工作)
 
 [English](README.md) · **简体中文**
