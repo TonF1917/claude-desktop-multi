@@ -69,19 +69,18 @@ $script:StarCache = @{}
 function Get-FlaggedStars {
   $best = @{}
   foreach ($f in Get-SessionFolders) {
-    foreach ($p in [IO.Directory]::EnumerateFiles($f.Path, 'local_*.json')) {
-      $t = [IO.File]::GetLastWriteTimeUtc($p); $n = [IO.Path]::GetFileNameWithoutExtension($p)
-      if (-not $best.ContainsKey($n) -or $t -gt $best[$n].t) { $best[$n] = @{ p = $p; t = $t } }
+    foreach ($kv in ([ShellProp]::Index($f.Path)).GetEnumerator()) {
+      if (-not $best.ContainsKey($kv.Key) -or $kv.Value -gt $best[$kv.Key].t) { $best[$kv.Key] = @{ p = [IO.Path]::Combine($f.Path, $kv.Key); t = $kv.Value } }
     }
   }
   $out = [Collections.ArrayList]::new()
-  foreach ($n in ($best.Keys | Sort-Object)) {
-    $e = $best[$n]; $c = $script:StarCache[$e.p]
+  foreach ($k in ($best.Keys | Sort-Object)) {
+    $e = $best[$k]; $c = $script:StarCache[$e.p]
     if (-not $c -or $c.t -ne $e.t) {
       $txt = [IO.File]::ReadAllText($e.p)
       $c = @{ t = $e.t; star = ($txt -match '"isStarred":true' -and $txt -notmatch '"isArchived":true') }; $script:StarCache[$e.p] = $c
     }
-    if ($c.star) { [void]$out.Add($n) }
+    if ($c.star) { [void]$out.Add([IO.Path]::GetFileNameWithoutExtension($k)) }
   }
   , $out
 }

@@ -3,6 +3,11 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
 public static class ShellProp {
+  public static System.Collections.Generic.Dictionary<string, long> Index(string dir) {   // file name -> last-write ticks, one enumeration (fast; PowerShell per-file calls were not)
+    var d = new System.Collections.Generic.Dictionary<string, long>();
+    foreach (var f in new System.IO.DirectoryInfo(dir).EnumerateFiles("local_*.json")) d[f.Name] = f.LastWriteTimeUtc.Ticks;
+    return d;
+  }
   [StructLayout(LayoutKind.Sequential, Pack = 4)]
   public struct PROPERTYKEY { public Guid fmtid; public uint pid; }
   [StructLayout(LayoutKind.Explicit)]

@@ -283,29 +283,29 @@ function Backup-Sessions {
 function Invoke-SessionSync {
   $folders = @(Get-SessionFolders)
   if ($folders.Count -lt 2) { return 0 }
-  $best = @{}
+  $idx = @{}; $best = @{}
   foreach ($f in $folders) {
-    foreach ($p in [IO.Directory]::EnumerateFiles($f.Path, 'local_*.json')) {
-      $fi = New-Object IO.FileInfo $p; $n = $fi.Name
-      if (-not $best.ContainsKey($n) -or $fi.LastWriteTimeUtc -gt $best[$n].t) { $best[$n] = @{ p = $p; t = $fi.LastWriteTimeUtc } }
+    $ix = [ShellProp]::Index($f.Path); $idx[$f.Path] = $ix
+    foreach ($kv in $ix.GetEnumerator()) {
+      if (-not $best.ContainsKey($kv.Key) -or $kv.Value -gt $best[$kv.Key].t) { $best[$kv.Key] = @{ p = [IO.Path]::Combine($f.Path, $kv.Key); t = $kv.Value } }
     }
   }
-  $copied = 0
+  $copied = 0; $slack = 10000000     # 1 s in ticks
   foreach ($f in $folders) {
-    foreach ($n in $best.Keys) {
-      $dst = [IO.Path]::Combine($f.Path, $n); $b = $best[$n]
-      $isNew = -not [IO.File]::Exists($dst)
-      $need = $isNew -or ([IO.File]::GetLastWriteTimeUtc($dst) -lt $b.t.AddSeconds(-1))
-      if ($need -and $dst -ne $b.p) {
-        try {
-          $metaChanged = $false
-          if (-not $isNew) { $metaChanged = ((Get-SessionMeta $dst) -ne (Get-SessionMeta $b.p)) }
-          [IO.File]::Copy($b.p, $dst, $true); [IO.File]::SetLastWriteTimeUtc($dst, $b.t)
-          $script:CopiedStamp[$dst] = [IO.File]::GetLastWriteTimeUtc($dst).Ticks
-          if ($isNew -or $metaChanged) { $script:StaleSince[$f.Id] = Get-Date }     # only a session the instance has never seen makes it stale (updates to known ones do not)
-          $copied++
-        } catch { }
-      }
+    $ix = $idx[$f.Path]
+    foreach ($n in @($best.Keys)) {
+      $b = $best[$n]; $have = $ix.ContainsKey($n)
+      if ($have -and $ix[$n] -ge $b.t - $slack) { continue }                       # up to date: the common case costs one dictionary lookup
+      $dst = [IO.Path]::Combine($f.Path, $n)
+      if ($dst -eq $b.p) { continue }
+      try {
+        $metaChanged = $false
+        if ($have) { $metaChanged = ((Get-SessionMeta $dst) -ne (Get-SessionMeta $b.p)) }
+        [IO.File]::Copy($b.p, $dst, $true); [IO.File]::SetLastWriteTimeUtc($dst, [DateTime]::new($b.t, 'Utc'))
+        $script:CopiedStamp[$dst] = [IO.File]::GetLastWriteTimeUtc($dst).Ticks
+        if (-not $have -or $metaChanged) { $script:StaleSince[$f.Id] = Get-Date }     # only a session the instance has never seen makes it stale (updates to known ones do not)
+        $copied++
+      } catch { }
     }
   }
   $copied
